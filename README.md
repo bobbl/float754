@@ -15,6 +15,12 @@ Roadmap
  5. C implementation of quad precision
  6. Rearrangement of C code to better fit hardware demands
  7. Translation to VHDL
+ 
+Open Questions
+-------------
+ * Should exceptions be supported?
+ * More than one rounding mode?
+ * Decimal support?
 
 License
 -------
