@@ -369,6 +369,8 @@ float16 float16_add(float16 a, float16 b)
 }
 
 
+#define D_BIAS (uint_fast32_t)(F32_BIAS-F16_BIAS)
+#define D_MANT (F32_MANT_WIDTH-F16_MANT_WIDTH)
 
 float32 float32_from_float16(float16 f)
 {
@@ -380,17 +382,49 @@ float32 float32_from_float16(float16 f)
 	if (abs==0) return sign;		// zero
 
 	uint_fast32_t shift = clz_16(abs);	// subnormal
-	return sign | (((F32_BIAS-F16_BIAS-shift+16-F16_MANT_WIDTH-1)<<F32_MANT_WIDTH) 
-	    + (abs<<(shift+F32_MANT_WIDTH-16+1)));
+	return sign | (((D_BIAS-F16_MANT_WIDTH+16-1-shift)<<F32_MANT_WIDTH) 
+	    + (abs<<(F32_MANT_WIDTH-16+1+shift)));
     }
     
     if (abs>=F16_EXP_MASK)			// infinity with sign or NaN
 	return (abs==F16_EXP_MASK) ? (sign|F32_EXP_MASK) : F32_NAN;
 
-    return (sign | (abs<<(F32_MANT_WIDTH-F16_MANT_WIDTH)))
-	+ ((uint_fast32_t)(F32_BIAS-F16_BIAS)<<F32_MANT_WIDTH);	// normal
+    return (sign | (abs<<D_MANT)) + (D_BIAS<<F32_MANT_WIDTH);
 }
 
+float16 float16_from_float32(float32 f)
+{
+    uint_fast32_t sign = (f>>16)&F16_SIGN_MASK;
+    uint_fast32_t abs = f&0x7fffffff;
+
+    if (abs >= ((D_BIAS+31)<<F32_MANT_WIDTH))
+	// already Nan or infinity or too big => infinity
+	return (abs > F32_EXP_MASK) ? F16_NAN : (sign | F16_EXP_MASK);
+
+    if (abs < ((uint_fast32_t)(F32_BIAS-F32_MANT_WIDTH-1)<<F32_MANT_WIDTH))
+	// too small => zero
+	return sign;
+
+    uint_fast32_t mant = (f&F32_MANT_MASK) + F32_MANT_MASK
+	+ ((uint_fast32_t)1<<(D_MANT-1)) + ((f>>D_MANT) & 1);
+    uint_fast32_t exp = abs>>F32_MANT_WIDTH;
+
+    if (mant >= ((uint_fast32_t)2<<F32_MANT_WIDTH))
+    {
+	if (exp >= D_BIAS)
+	    return sign | (((exp-(D_BIAS))<<F16_MANT_WIDTH) + (mant>>(D_MANT+1)));
+    }
+    else if (exp > D_BIAS)
+	return sign | (((exp-(D_BIAS+1))<<F16_MANT_WIDTH) + (mant>>D_MANT));
+
+    // subnormal
+    return sign | (mant >> (D_BIAS+D_MANT+1-exp));
+}
+
+#undef D_BIAS
+#undef D_MANT
+#define D_BIAS (uint_fast64_t)(F64_BIAS-F16_BIAS)
+#define D_MANT (F64_MANT_WIDTH-F16_MANT_WIDTH)
 
 float64 float64_from_float16(float16 f)
 {
@@ -402,47 +436,14 @@ float64 float64_from_float16(float16 f)
 	if (abs==0) return sign;		// zero
 
 	uint_fast64_t shift = clz_16(abs);	// subnormal
-	return sign | (((F64_BIAS-F16_BIAS-shift+16-F16_MANT_WIDTH-1)<<F64_MANT_WIDTH) 
-	    + (abs<<(shift+F64_MANT_WIDTH-16+1)));
+	return sign | (((D_BIAS-F16_MANT_WIDTH+16-1-shift)<<F64_MANT_WIDTH) 
+	    + (abs<<(F64_MANT_WIDTH-16+1+shift)));
     }
     
     if (abs>=F16_EXP_MASK)			// infinity with sign or NaN
 	return (abs==F16_EXP_MASK) ? (sign|F64_EXP_MASK) : F64_NAN;
 
-    return (sign | (abs<<(F64_MANT_WIDTH-F16_MANT_WIDTH)))
-	+ ((uint_fast64_t)(F64_BIAS-F16_BIAS)<<F64_MANT_WIDTH);	// normal
-
-}
-
-
-float16 float16_from_float32(float32 f)
-{
-    uint_fast32_t sign = (f>>16)&F16_SIGN_MASK;
-    uint_fast32_t abs = f&0x7fffffff;
-
-    if (abs >= ((F32_BIAS+31-F16_BIAS)<<F32_MANT_WIDTH))
-	// already Nan or infinity or too big => infinity
-	return (abs > F32_EXP_MASK) ? F16_NAN : (sign | F16_EXP_MASK);
-
-    if (abs < ((uint_fast32_t)(F32_BIAS-F32_MANT_WIDTH-1)<<F32_MANT_WIDTH))
-	return sign;			// too small => zero
-
-    uint_fast32_t mant = (f&F32_MANT_MASK) 
-	+ F32_MANT_MASK + ((uint32_t)1<<(F32_MANT_WIDTH-F16_MANT_WIDTH-1))
-	+ ((f>>(F32_MANT_WIDTH-F16_MANT_WIDTH)) & 1);
-    uint_fast32_t exp = abs>>F32_MANT_WIDTH;
-
-    if (mant >= ((uint_fast32_t)2<<F32_MANT_WIDTH))
-    {
-	if (exp >= F32_BIAS-F16_BIAS)
-	    return sign | (((exp-(F32_BIAS-F16_BIAS))<<10) 
-		+ (mant>>(F32_MANT_WIDTH-F16_MANT_WIDTH+1))); 	// normal
-    }
-    else if (exp > F32_BIAS-F16_BIAS)
-	return sign | (((exp-(F32_BIAS-F16_BIAS+1))<<10) 
-	    + (mant>>(F32_MANT_WIDTH-F16_MANT_WIDTH))); 	// normal
-
-    return sign | (mant >> (F32_BIAS-exp-F16_BIAS+F32_MANT_WIDTH-F16_MANT_WIDTH+1));	// subnormal
+    return (sign | (abs<<(D_MANT))) + (D_BIAS<<F64_MANT_WIDTH);
 }
 
 
@@ -451,40 +452,32 @@ float16 float16_from_float64(float64 f)
     uint_fast64_t sign = (f>>48)&F16_SIGN_MASK;
     uint_fast64_t abs = f&0x7fffffffffffffff;
 
-//printf("abs=%lx border=%lx\n", abs, ((uint_fast64_t)(F64_BIAS-F64_MANT_WIDTH-1)<<F64_MANT_WIDTH)); 
-    if (abs >= ((uint64_t)(F64_BIAS+31-F16_BIAS)<<F64_MANT_WIDTH))
+    if (abs >= ((uint64_t)(D_BIAS+32-1)<<F64_MANT_WIDTH))
 	// already Nan or infinity or too big => infinity
 	return (abs > F64_EXP_MASK) ? F16_NAN : (sign | F16_EXP_MASK);
 
     if (abs < ((uint_fast64_t)(F64_BIAS-F64_MANT_WIDTH-1)<<F64_MANT_WIDTH))
-	return sign;			// too small => zero
+	// too small => zero
+	return sign;
 
-    uint_fast64_t mant = (f&F64_MANT_MASK) 
-	+ F64_MANT_MASK + ((uint64_t)1<<(F64_MANT_WIDTH-F16_MANT_WIDTH-1))
-	+ ((f>>(F64_MANT_WIDTH-F16_MANT_WIDTH)) & 1);
+    uint_fast64_t mant = (f&F64_MANT_MASK) + F64_MANT_MASK
+	+ ((uint64_t)1<<(D_MANT-1)) + ((f>>(D_MANT)) & 1);
     uint_fast64_t exp = abs>>F64_MANT_WIDTH;
-
 
     if (mant >= ((uint_fast64_t)2<<F64_MANT_WIDTH))
     {
-//printf("A");
-	if (exp >= F64_BIAS-F16_BIAS)
-	    return sign | (((exp-(F64_BIAS-F16_BIAS))<<10) 
-		+ (mant>>(F64_MANT_WIDTH-F16_MANT_WIDTH+1))); 	// normal
+	if (exp >= D_BIAS)
+	    return sign | (((exp-D_BIAS)<<F16_MANT_WIDTH) + (mant>>(D_MANT+1)));
     }
-    else if (exp > F64_BIAS-F16_BIAS)
-    {
-//printf("B");
-	return sign | (((exp-(F64_BIAS-F16_BIAS+1))<<10) 
-	    + (mant>>(F64_MANT_WIDTH-F16_MANT_WIDTH))); 	// normal
-    }
-//printf("C");
-//printf("abs=%lx mant=%lx exp=%lx shifted=%lx\n", abs, mant, exp, 
-//(mant >> (F64_BIAS-exp-F16_BIAS+F64_MANT_WIDTH-F16_MANT_WIDTH+1-1)));
-//    return sign | (mant >> (F64_BIAS-1-exp+28));	// subnormal
-    return sign | (mant >> (F64_BIAS-exp-F16_BIAS+F64_MANT_WIDTH-F16_MANT_WIDTH+1));	// subnormal
+    else if (exp > D_BIAS)
+	return sign | (((exp-(D_BIAS+1))<<F16_MANT_WIDTH) + (mant>>D_MANT));
+
+    // subnormal
+    return sign | (mant >> (D_BIAS+D_MANT+1-exp));
 }
 
+#undef D_BIAS
+#undef D_MANT
 
 
 
@@ -569,7 +562,6 @@ int main()
 	    return 1;
 	}
 
-/*
 	for (j=0; j<0x10000; j++)
 	{
 	    b=j;
@@ -589,8 +581,8 @@ int main()
 		return 1;
 	    }
 	}
-*/
 
+/*
 	for (j=0; j<0x10000; j++)
 	{
 	    b=j;
@@ -610,6 +602,7 @@ int main()
 		return 1;
 	    }
 	}
+*/
 
     }
     return 0;
