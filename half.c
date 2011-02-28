@@ -79,21 +79,6 @@ uint_fast16_t clz_64(uint_fast64_t x)
 
     return (64 - (x & 0x7f));
 }
-
-uint_fast16_t _clz_64(uint_fast64_t x)
-{
-
-    uint_fast8_t count = 0x40;
-    uint_fast64_t b;
-    b = (x<0x100000000) ? 0 : 32; count -= b; x >>= b;
-    b = (x<0x10000) ? 0 : 16; count -= b; x >>= b;
-    b = (x<0x100) ? 0 : 8; count -= b; x >>= b;
-    b = (x<0x10) ? 0 : 4; count -= b; x >>= b;
-    b = (x<0x4) ? 0 : 2; count -= b; x >>= b;
-    return count - (x<0x2 ? x : 2);
-}
-
-
 */
 #define clz_64(x) (__builtin_clzl(x))
 #define clz_32(x) (__builtin_clzl(x)-32)
@@ -115,9 +100,9 @@ typedef uint64_t float64;
 #define F16_SIGNALLING_MASK	0x0200
 #define F16_NAN			0xfe00
 #define F16_MANT_WIDTH		10
-#define F16_SPECIAL_EXP		0x1f
+#define F16_EXP_MAX		0x1f
 #define F16_BIAS		15
-#define F16_EXTRACT_EXP(f)	(((f)>>F16_MANT_WIDTH)&F16_SPECIAL_EXP)
+#define F16_EXTRACT_EXP(f)	(((f)>>F16_MANT_WIDTH)&F16_EXP_MAX)
 #define F16_EXTRACT_MANT(f)	((f)&F16_MANT_MASK)
 
 #define F32_SIGN_MASK		0x80000000
@@ -126,9 +111,9 @@ typedef uint64_t float64;
 #define F32_SIGNALLING_MASK	0x00400000
 #define F32_NAN			0xffc00000
 #define F32_MANT_WIDTH		23
-#define F32_SPECIAL_EXP		0xff
+#define F32_EXP_MAX		0xff
 #define F32_BIAS		127
-#define F32_EXTRACT_EXP(f)	(((f)>>F32_MANT_WIDTH)&F32_SPECIAL_EXP)
+#define F32_EXTRACT_EXP(f)	(((f)>>F32_MANT_WIDTH)&F32_EXP_MAX)
 #define F32_EXTRACT_MANT(f)	((f)&F32_MANT_MASK)
 
 #define F64_SIGN_MASK		0x8000000000000000
@@ -137,9 +122,9 @@ typedef uint64_t float64;
 #define F64_SIGNALLING_MASK	0x0008000000000000
 #define F64_NAN			0xfff8000000000000
 #define F64_MANT_WIDTH		52
-#define F64_SPECIAL_EXP		0x7ff
+#define F64_EXP_MAX		0x7ff
 #define F64_BIAS		1023
-#define F64_EXTRACT_EXP(f)	(((f)>>F64_MANT_WIDTH)&F64_SPECIAL_EXP)
+#define F64_EXTRACT_EXP(f)	(((f)>>F64_MANT_WIDTH)&F64_EXP_MAX)
 #define F64_EXTRACT_MANT(f)	((f)&F64_MANT_MASK)
 
 
@@ -167,7 +152,7 @@ float16 float16_add(float16 a, float16 b)
 
     if (diff_exp == 0)
     {
-	if (hi_exp == F16_SPECIAL_EXP)
+	if (hi_exp == F16_EXP_MAX)
 	{
 	    // infinity or NaN
 	    if ( ((a|b) & F16_MANT_MASK) == 0)
@@ -199,7 +184,7 @@ float16 float16_add(float16 a, float16 b)
 	    // both numbers have the same sign -> addition
 	    sum = a_mant + b_mant;
 
-	    if (hi_exp==(F16_SPECIAL_EXP-1))
+	    if (hi_exp==(F16_EXP_MAX-1))
 		// by the addition the exponent is increased by 1
 		// and then it is too big 
 		return hi_sign | F16_EXP_MASK;
@@ -267,7 +252,7 @@ float16 float16_add(float16 a, float16 b)
 	// temporarily the lower bits of hi_sign are not masked out,
 	// in order to return the correct value in the case of an exception
 
-	if (hi_exp == F16_SPECIAL_EXP)
+	if (hi_exp == F16_EXP_MAX)
 	{
 	    if (hi_mant==0)
 		return hi_sign;				// infinity
@@ -320,7 +305,7 @@ float16 float16_add(float16 a, float16 b)
 	    }
 	    else					// 1 bit overflow
 	    {
-		if (hi_exp>=F16_SPECIAL_EXP-1)
+		if (hi_exp>=F16_EXP_MAX-1)
 		    return hi_sign | F16_EXP_MASK;	// infinity
 
 		if ((sum&1) == 0)
@@ -395,9 +380,9 @@ float32 float32_from_float16(float16 f)
 float16 float16_from_float32(float32 f)
 {
     uint_fast32_t sign = (f>>16)&F16_SIGN_MASK;
-    uint_fast32_t abs = f&0x7fffffff;
+    uint_fast32_t abs = f&(F32_EXP_MASK|F32_MANT_MASK);
 
-    if (abs >= ((D_BIAS+31)<<F32_MANT_WIDTH))
+    if (abs >= ((D_BIAS+F16_EXP_MAX)<<F32_MANT_WIDTH))
 	// already Nan or infinity or too big => infinity
 	return (abs > F32_EXP_MASK) ? F16_NAN : (sign | F16_EXP_MASK);
 
@@ -412,10 +397,10 @@ float16 float16_from_float32(float32 f)
     if (mant >= ((uint_fast32_t)2<<F32_MANT_WIDTH))
     {
 	if (exp >= D_BIAS)
-	    return sign | (((exp-(D_BIAS))<<F16_MANT_WIDTH) + (mant>>(D_MANT+1)));
+	    return sign | (((exp-D_BIAS)<<F16_MANT_WIDTH) + (mant>>(D_MANT+1)));
     }
     else if (exp > D_BIAS)
-	return sign | (((exp-(D_BIAS+1))<<F16_MANT_WIDTH) + (mant>>D_MANT));
+	return sign | (((exp-D_BIAS-1)<<F16_MANT_WIDTH) + (mant>>D_MANT));
 
     // subnormal
     return sign | (mant >> (D_BIAS+D_MANT+1-exp));
@@ -425,52 +410,54 @@ float16 float16_from_float32(float32 f)
 #undef D_MANT
 #define D_BIAS (uint_fast64_t)(F64_BIAS-F16_BIAS)
 #define D_MANT (F64_MANT_WIDTH-F16_MANT_WIDTH)
+#define S_MANT F16_MANT_WIDTH
+#define L_MANT F64_MANT_WIDTH
 
 float64 float64_from_float16(float16 f)
 {
     uint_fast64_t sign = ((uint_fast64_t)f&F16_SIGN_MASK)<<48;
-    uint_fast16_t abs = f&(F16_EXP_MASK|F16_MANT_MASK);
+    uint_fast16_t abs = f&(F16_SIGN_MASK-1);
     
     if (abs<=F16_MANT_MASK)
     {
 	if (abs==0) return sign;		// zero
 
 	uint_fast64_t shift = clz_16(abs);	// subnormal
-	return sign | (((D_BIAS-F16_MANT_WIDTH+16-1-shift)<<F64_MANT_WIDTH) 
-	    + (abs<<(F64_MANT_WIDTH-16+1+shift)));
+	return sign | (((D_BIAS-S_MANT+16-1-shift)<<L_MANT) 
+	    + (abs<<(L_MANT-16+1+shift)));
     }
     
     if (abs>=F16_EXP_MASK)			// infinity with sign or NaN
 	return (abs==F16_EXP_MASK) ? (sign|F64_EXP_MASK) : F64_NAN;
 
-    return (sign | (abs<<(D_MANT))) + (D_BIAS<<F64_MANT_WIDTH);
+    return (sign | (abs<<D_MANT)) + (D_BIAS<<L_MANT);
 }
 
 
 float16 float16_from_float64(float64 f)
 {
     uint_fast64_t sign = (f>>48)&F16_SIGN_MASK;
-    uint_fast64_t abs = f&0x7fffffffffffffff;
+    uint_fast64_t abs = f&(F64_SIGN_MASK-1);
 
-    if (abs >= ((uint64_t)(D_BIAS+32-1)<<F64_MANT_WIDTH))
+    if (abs >= ((uint64_t)(D_BIAS+F16_EXP_MAX)<<L_MANT))
 	// already Nan or infinity or too big => infinity
 	return (abs > F64_EXP_MASK) ? F16_NAN : (sign | F16_EXP_MASK);
 
-    if (abs < ((uint_fast64_t)(F64_BIAS-F64_MANT_WIDTH-1)<<F64_MANT_WIDTH))
+    if (abs < ((uint_fast64_t)(F64_BIAS-L_MANT-1)<<L_MANT))
 	// too small => zero
 	return sign;
 
     uint_fast64_t mant = (f&F64_MANT_MASK) + F64_MANT_MASK
-	+ ((uint64_t)1<<(D_MANT-1)) + ((f>>(D_MANT)) & 1);
-    uint_fast64_t exp = abs>>F64_MANT_WIDTH;
+	+ ((uint64_t)1<<(D_MANT-1)) + ((f>>D_MANT) & 1);
+    uint_fast64_t exp = abs>>L_MANT;
 
-    if (mant >= ((uint_fast64_t)2<<F64_MANT_WIDTH))
+    if (mant >= ((uint_fast64_t)2<<L_MANT))
     {
 	if (exp >= D_BIAS)
-	    return sign | (((exp-D_BIAS)<<F16_MANT_WIDTH) + (mant>>(D_MANT+1)));
+	    return sign | (((exp-D_BIAS)<<S_MANT) + (mant>>(D_MANT+1)));
     }
     else if (exp > D_BIAS)
-	return sign | (((exp-(D_BIAS+1))<<F16_MANT_WIDTH) + (mant>>D_MANT));
+	return sign | (((exp-D_BIAS-1)<<S_MANT) + (mant>>D_MANT));
 
     // subnormal
     return sign | (mant >> (D_BIAS+D_MANT+1-exp));
@@ -478,6 +465,60 @@ float16 float16_from_float64(float64 f)
 
 #undef D_BIAS
 #undef D_MANT
+
+
+int64_t int64_from_float16_zero(float16 f)
+{
+    uint_fast16_t exp = (f>>F16_MANT_WIDTH)&F16_EXP_MAX;
+
+    if (exp<F16_BIAS)
+	return 0;
+    if (exp==F16_EXP_MAX)
+	return (f==F16_EXP_MASK) ? INT64_MAX : INT64_MIN;
+	// in ANSI-C the behaviour is undefined if inf or NaN
+	// gcc-x86 returns always INT64_MIN
+	// return INT64_MIN;
+
+    int_fast32_t abs = (((f&F16_MANT_MASK)|(F16_MANT_MASK+1))
+	<< (exp-F16_BIAS)) >> F16_MANT_WIDTH;
+    return (f&F16_SIGN_MASK) ? -abs : abs;
+}
+
+
+// shift right the value v by s and round to nearest or even
+#define SHR_NEAREST_EVEN(v, s) (((v) + (1<<((s)-1))-1 + (((v)>>((s)))&1))>>(s))
+
+float16 float16_from_int64(int64_t i)
+{
+    uint16_t sign=0;
+    
+    if (i<0)
+    {
+	if (i <= -(1<<(F16_EXP_MAX-F16_BIAS)))
+	    return F16_SIGN_MASK | F16_EXP_MASK;
+	sign = F16_SIGN_MASK;
+	i = -i;
+    }
+    else
+    {
+	if (i==0)
+	    return 0;
+	if (i >= (1<<(F16_EXP_MAX-F16_BIAS)))
+    	    return F16_EXP_MASK; // + infinity
+    }
+
+    uint_fast16_t shift = clz_16(i);
+    uint_fast16_t mant = (i<<shift)&0x7fff;
+
+    // rounding
+    mant = SHR_NEAREST_EVEN(mant, 16-1-F16_MANT_WIDTH);
+
+    return sign | (((F16_EXP_MAX-1-shift)<<F16_MANT_WIDTH) + mant);
+    // the + instead of a | guarantees that in the case of an overflow
+    // by the rounding the exponent is increased by 1
+}
+
+
 
 
 
@@ -543,16 +584,58 @@ double rand_double()
     return *p;
 }
 
+int64_t int64_from_double(double d)
+{
+    // In ANSI-C the conversion of inf and NaN is undefined, therefore
+    // x86-gcc returns INT64_MIN, link the cvttss2si instruction.
+    // But according to IEEE 754 INT64_MAX should be returned if +inf
+    if (isinf(d) && (d>0))
+	return INT64_MAX;
+    return (int64_t)d;
+}
+
 
 int main()
 {
-    float16 a, b, correct, test;
+    float16 a;
+    //float16 b, correct, test;
+    int64_t i64;
 
 
     for (i=0; i<0x10000; i++)
     {
 	a = i;
+	
+	i64 = int64_from_float16_zero(a);
+	if (i64 != int64_from_double(double_from_float16(a)))
+	{
+	    printf("int64_from_float16(%04x %g) = %ld != %ld\n",
+		a, float_from_float16(a), 
+		i64, int64_from_double(double_from_float16(a)));
+	    return 1;
+	}
 
+	if (float16_from_int64(i64) != float16_from_double((double)i64))
+	{
+	    printf("float16_from_int64(%ld) = %04x %g != %04x %g\n",
+		i64, float16_from_int64(i64), double_from_float16(float16_from_int64(i64)),
+		float16_from_double((double)i64),
+		double_from_float16(float16_from_double((double)i64)));
+	    return 1;
+	}
+	
+	i64 = a ^ (a<<3);
+	if (float16_from_int64(i64) != float16_from_double((double)i64))
+	{
+	    printf("float16_from_int64(%ld) = %04x %g != %04x %g\n",
+		i64, float16_from_int64(i64), double_from_float16(float16_from_int64(i64)),
+		float16_from_double((double)i64),
+		double_from_float16(float16_from_double((double)i64)));
+	    return 1;
+	}
+	
+
+/*
 	b = float16_from_float64(float64_from_float16(a));
 	if (a!=b && b!=F16_NAN)
         {
@@ -565,10 +648,10 @@ int main()
 	for (j=0; j<0x10000; j++)
 	{
 	    b=j;
+	    test = float16_add(a, b);
+
 	    float sum = float_from_float16(a) + float_from_float16(b);
 	    correct = float16_from_float(sum);
-	    test = float16_add(a, b);
-	    
 	    if (correct!=test) // works only, as NaN is always default value
 	    {
 		printf("%04x (%g %08x) + %04x (%g %08x) = "
@@ -580,16 +663,9 @@ int main()
 		    test, float_from_float16(test), hex_from_float(float_from_float16(test)));
 		return 1;
 	    }
-	}
 
-/*
-	for (j=0; j<0x10000; j++)
-	{
-	    b=j;
-	    double sum = double_from_float16(a) + double_from_float16(b);
-	    correct = float16_from_double(sum);
-	    test = float16_add(a, b);
-	    
+	    double sumd = double_from_float16(a) + double_from_float16(b);
+	    correct = float16_from_double(sumd);
 	    if (correct!=test) // works only, as NaN is always default value
 	    {
 		printf("%04x (%g %016lx) + %04x (%g %016lx) = "
@@ -597,13 +673,12 @@ int main()
 		    a, double_from_float16(a), float64_from_float16(a),
 		    b, double_from_float16(b), float64_from_float16(b),
 		    correct, float_from_float16(correct), float64_from_float16(correct),
-		    sum, //hex_from_float(sum),
+		    sumd, //hex_from_float(sumd),
 		    test, float_from_float16(test));
 		return 1;
 	    }
 	}
 */
-
     }
     return 0;
 }
