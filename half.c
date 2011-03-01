@@ -474,10 +474,7 @@ int64_t int64_from_float16_zero(float16 f)
     if (exp<F16_BIAS)
 	return 0;
     if (exp==F16_EXP_MAX)
-	return (f==F16_EXP_MASK) ? INT64_MAX : INT64_MIN;
-	// in ANSI-C the behaviour is undefined if inf or NaN
-	// gcc-x86 returns always INT64_MIN
-	// return INT64_MIN;
+	return INT64_MIN; // too big or NaN
 
     int_fast32_t abs = (((f&F16_MANT_MASK)|(F16_MANT_MASK+1))
 	<< (exp-F16_BIAS)) >> F16_MANT_WIDTH;
@@ -485,8 +482,27 @@ int64_t int64_from_float16_zero(float16 f)
 }
 
 
+int64_t int64_from_float32_zero(float32 f)
+{
+    uint_fast16_t exp = (f>>F32_MANT_WIDTH)&F32_EXP_MAX;
+    int_fast64_t abs;
+    if (exp<F32_BIAS)
+	return 0;
+    if (exp>F32_BIAS+63)
+	return INT64_MIN; // too big or NaN
+
+    if (exp<F32_BIAS+64-F32_MANT_WIDTH)
+	abs = (((f&F32_MANT_MASK)|(F32_MANT_MASK+1))
+	    << (exp-F32_BIAS)) >> F32_MANT_WIDTH;
+    else
+	abs = ((f&F32_MANT_MASK)|(F32_MANT_MASK+1))
+	    << (exp-F32_BIAS-F32_MANT_WIDTH);
+    return (f&F32_SIGN_MASK) ? -abs : abs;
+}
+
+
 // shift right the value v by s and round to nearest or even
-#define SHR_NEAREST_EVEN(v, s) (((v) + (1<<((s)-1))-1 + (((v)>>((s)))&1))>>(s))
+#define SHR_NEAREST_EVEN(v, s) (((v) + (1L<<((s)-1))-1 + (((v)>>((s)))&1))>>(s))
 
 float16 float16_from_int64(int64_t i)
 {
@@ -513,11 +529,34 @@ float16 float16_from_int64(int64_t i)
     // rounding
     mant = SHR_NEAREST_EVEN(mant, 16-1-F16_MANT_WIDTH);
 
-    return sign | (((F16_EXP_MAX-1-shift)<<F16_MANT_WIDTH) + mant);
+    return sign | (((F16_BIAS+16-1-shift)<<F16_MANT_WIDTH) + mant);
     // the + instead of a | guarantees that in the case of an overflow
     // by the rounding the exponent is increased by 1
 }
 
+
+float32 float32_from_int64(int64_t i)
+{
+    float32 sign=0;
+    
+    if (i<0)
+    {
+	sign = F32_SIGN_MASK;
+	i = -i;
+    }
+    else if (i==0)
+	return 0;
+
+    uint_fast64_t shift = clz_64(i);
+    uint_fast64_t mant = (i<<shift)&0x7fffffffffffffff;
+
+    // rounding
+    mant = SHR_NEAREST_EVEN(mant, 64-1-F32_MANT_WIDTH);
+
+    return sign | (((F32_BIAS+64-1-shift)<<F32_MANT_WIDTH) + mant);
+    // the + instead of a | guarantees that in the case of an overflow
+    // by the rounding the exponent is increased by 1
+}
 
 
 
@@ -570,29 +609,41 @@ float16 float16_from_double(double f)
     return float16_from_float64(a.u);
 }
 
+float32 float32_from_float(float f)
+{
+    uf32_t r;
+    r.f = f;
+    return r.u;
+}
+
+float float_from_float32(float32 f)
+{
+    uf32_t r;
+    r.u = f;
+    return r.f;
+}
+
 
 #define MAX_ITER 100000000
 
+uint64_t rand64_seed = 0;
+
+uint64_t rand64()
+{
+    rand64_seed = 6364136223846793005L*rand64_seed + 1442695040888963407L;
+    return rand64_seed;
+}
 
 double rand_double()
 {
-    uint64_t	u, v;
-    double	*p = (double *)&v;
+    uint64_t	u;
+    double	*p = (double *)&u;
 
-    u = rand();
-    v = (u<<32) | rand();
+    u = rand64();
     return *p;
 }
 
-int64_t int64_from_double(double d)
-{
-    // In ANSI-C the conversion of inf and NaN is undefined, therefore
-    // x86-gcc returns INT64_MIN, link the cvttss2si instruction.
-    // But according to IEEE 754 INT64_MAX should be returned if +inf
-    if (isinf(d) && (d>0))
-	return INT64_MAX;
-    return (int64_t)d;
-}
+
 
 
 int main()
@@ -607,11 +658,11 @@ int main()
 	a = i;
 	
 	i64 = int64_from_float16_zero(a);
-	if (i64 != int64_from_double(double_from_float16(a)))
+	if (i64 != (int64_t)double_from_float16(a))
 	{
 	    printf("int64_from_float16(%04x %g) = %ld != %ld\n",
 		a, float_from_float16(a), 
-		i64, int64_from_double(double_from_float16(a)));
+		i64, (int64_t)double_from_float16(a));
 	    return 1;
 	}
 
@@ -633,6 +684,18 @@ int main()
 		double_from_float16(float16_from_double((double)i64)));
 	    return 1;
 	}
+	
+	i64 = ((float)rand64());
+	if (float32_from_int64(i64) != float32_from_float((float)i64))
+	{
+	    printf("float32_from_int64(%ld) = %08x %g != %08x %g\n",
+		i64, float32_from_int64(i64), float_from_float32(float32_from_int64(i64)),
+		float32_from_float((float)i64),
+		(float)i64);
+	    return 1;
+	}
+	
+	
 	
 
 /*
