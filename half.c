@@ -98,41 +98,51 @@ typedef uint64_t float64;
 //#define F16_EXP_MASK		0x7c00
 //#define F16_MANT_MASK		0x03ff
 //#define F16_SIGNALLING_MASK	0x0200
-#define F16_NAN			0xfe00
+//#define F16_NAN			0xfe00
 #define F16_MANT_WIDTH		10
 //#define F16_EXP_MAX		0x1f
-#define F16_BIAS		15
+#define F16_BIAS		15L
 
 //#define F32_SIGN_MASK		0x80000000
 //#define F32_EXP_MASK		0x7f800000
 //#define F32_MANT_MASK		0x007fffff
 //#define F32_SIGNALLING_MASK	0x00400000
-#define F32_NAN			0xffc00000
+//#define F32_NAN			0xffc00000
 #define F32_MANT_WIDTH		23
 //#define F32_EXP_MAX		0xff
-#define F32_BIAS		127
+#define F32_BIAS		127L
 
 //#define F64_SIGN_MASK		0x8000000000000000
 //#define F64_EXP_MASK		0x7ff0000000000000
 //#define F64_MANT_MASK		0x000fffffffffffff
 //#define F64_SIGNALLING_MASK	0x0008000000000000
-#define F64_NAN			0xfff8000000000000
+//#define F64_NAN			0xfff8000000000000
 #define F64_MANT_WIDTH		52
 //#define F64_EXP_MAX		0x7ff
-#define F64_BIAS		1023
+#define F64_BIAS		1023L
 
-#define NOTANUM(width)		F ## width ## _NAN
-#define MANT_WIDTH(width)	F ## width ## _MANT_WIDTH
-#define BIAS(width)		F ## width ## _BIAS
-#define SIGN_MASK(width)	(1L<<(width-1)) 		
+#define F128_MANT_WIDTH		112
+#define F128_BIAS		16383L
+
+#define _MANT_WIDTH(width)	F ## width ## _MANT_WIDTH
+#define _BIAS(width)		F ## width ## _BIAS
+#define _UINT_FAST(width)	uint_fast ## width ## _t
+#define _FLOAT(width)		float ## width
+#define _CLZ(width)		clz_ ## width
+#define MANT_WIDTH(width)	_MANT_WIDTH(width)
+#define BIAS(width)		_BIAS(width)
+#define UINT_FAST(width)	_UINT_FAST(width)
+#define FLOAT(width)		_FLOAT(width)
+#define CLZ(width)		_CLZ(width)
+
+#define SIGN_MASK(width)	(1L<<(width-1))
 #define EXP_MASK(width)		((1L<<(width-1))-(1L<<MANT_WIDTH(width)))
 #define MANT_MASK(width)	((1L<<MANT_WIDTH(width))-1)
 #define SIGNALLING_MASK(width)	(1L<<(MANT_WIDTH(width)-1))
-#define NOTANUM(width)		(1L<<(width-1)) - 
+#define NOTANUM(width)		((1L<<(width-1))|(((1L<<(width-MANT_WIDTH(width)))-1)<<(MANT_WIDTH(width)-1)))
 #define EXP_MAX(width)		((1L<<(width-1-MANT_WIDTH(width)))-1)
 #define EXTRACT_EXP(width, f)	(((f)>>MANT_WIDTH(width))&EXP_MAX(width))
 #define EXTRACT_MANT(width, f)	((f)&MANT_MASK(width))
-
 
 
 
@@ -379,7 +389,7 @@ float32 float32_from_float16(float16 f)
     }
     
     if (abs>=EXP_MASK(16))			// infinity with sign or NaN
-	return (abs==EXP_MASK(16)) ? (sign|EXP_MASK(32)) : F32_NAN;
+	return (abs==EXP_MASK(16)) ? (sign|EXP_MASK(32)) : NOTANUM(32);
 
     return (sign | (abs<<D_MANT)) + (D_BIAS<<MANT_WIDTH(32));
 }
@@ -412,35 +422,45 @@ float16 float16_from_float32(float32 f)
     // subnormal
     return sign | (mant >> (D_BIAS+D_MANT+1-exp));
 }
-
 #undef D_BIAS
 #undef D_MANT
+
+
+#define SMALL 16
+#define BIG 64
+
+float64 float64_from_float16(float16 f)
+{
+    UINT_FAST(BIG) sign = ((UINT_FAST(BIG))f&SIGN_MASK(SMALL))<<(BIG-SMALL);
+    UINT_FAST(SMALL) abs = f&(SIGN_MASK(SMALL)-1);
+    
+    if (abs<=MANT_MASK(SMALL))
+    {
+	if (abs==0) return sign;			// zero
+
+	UINT_FAST(BIG) shift = SMALL-1-CLZ(SMALL)(abs);	// subnormal
+	return sign | (((BIAS(BIG)-BIAS(SMALL)-MANT_WIDTH(SMALL)+shift)<<MANT_WIDTH(BIG)) 
+	    + (abs<<(MANT_WIDTH(BIG)-shift)));
+    }
+    
+    if (abs<EXP_MASK(SMALL))				// representable
+	return (sign | (abs<<(MANT_WIDTH(BIG)-MANT_WIDTH(SMALL))))
+	    + ((BIAS(BIG)-BIAS(SMALL))<<MANT_WIDTH(BIG));
+
+    if (abs==EXP_MASK(SMALL))				// infinity with sign
+	return (sign|EXP_MASK(BIG));
+	
+    return NOTANUM(BIG); 				// NaN
+}
+
+
+
+
+
 #define D_BIAS (uint_fast64_t)(F64_BIAS-BIAS(16))
 #define D_MANT (F64_MANT_WIDTH-MANT_WIDTH(16))
 #define S_MANT MANT_WIDTH(16)
 #define L_MANT F64_MANT_WIDTH
-
-float64 float64_from_float16(float16 f)
-{
-    uint_fast64_t sign = ((uint_fast64_t)f&SIGN_MASK(16))<<48;
-    uint_fast16_t abs = f&(SIGN_MASK(16)-1);
-    
-    if (abs<=MANT_MASK(16))
-    {
-	if (abs==0) return sign;		// zero
-
-	uint_fast64_t shift = clz_16(abs);	// subnormal
-	return sign | (((D_BIAS-S_MANT+16-1-shift)<<L_MANT) 
-	    + (abs<<(L_MANT-16+1+shift)));
-    }
-    
-    if (abs>=EXP_MASK(16))			// infinity with sign or NaN
-	return (abs==EXP_MASK(16)) ? (sign|EXP_MASK(64)) : F64_NAN;
-
-    return (sign | (abs<<D_MANT)) + (D_BIAS<<L_MANT);
-}
-
-
 float16 float16_from_float64(float64 f)
 {
     uint_fast64_t sign = (f>>48)&SIGN_MASK(16);
@@ -448,7 +468,7 @@ float16 float16_from_float64(float64 f)
 
     if (abs >= ((uint64_t)(D_BIAS+EXP_MAX(16))<<L_MANT))
 	// already Nan or infinity or too big => infinity
-	return (abs > EXP_MASK(64)) ? F16_NAN : (sign | EXP_MASK(16));
+	return (abs > EXP_MASK(64)) ? NOTANUM(16) : (sign | EXP_MASK(16));
 
     if (abs < ((uint_fast64_t)(F64_BIAS-L_MANT-1)<<L_MANT))
 	// too small => zero
@@ -472,6 +492,78 @@ float16 float16_from_float64(float64 f)
 
 #undef D_BIAS
 #undef D_MANT
+
+
+#undef SMALL
+#undef BIG
+#define SMALL 32
+#define BIG 64
+
+float64 float64_from_float32(float32 f)
+{
+    UINT_FAST(BIG) sign = ((UINT_FAST(BIG))f&SIGN_MASK(SMALL))<<(BIG-SMALL);
+    UINT_FAST(SMALL) abs = f&(SIGN_MASK(SMALL)-1);
+    
+    if (abs<=MANT_MASK(SMALL))
+    {
+	if (abs==0) return sign;			// zero
+
+	UINT_FAST(BIG) shift = SMALL-1-CLZ(SMALL)(abs);	// subnormal
+	return sign | (((BIAS(BIG)-BIAS(SMALL)-MANT_WIDTH(SMALL)+shift)<<MANT_WIDTH(BIG)) 
+	    + (abs<<(MANT_WIDTH(BIG)-shift)));
+    }
+    
+    if (abs<EXP_MASK(SMALL))				// representable
+	return (sign | (abs<<(MANT_WIDTH(BIG)-MANT_WIDTH(SMALL))))
+	    + ((BIAS(BIG)-BIAS(SMALL))<<MANT_WIDTH(BIG));
+
+    if (abs==EXP_MASK(SMALL))				// infinity with sign
+	return (sign|EXP_MASK(BIG));
+	
+    return NOTANUM(BIG); 				// NaN
+}
+
+/*
+float16 float16_from_float64(float64 f)
+{
+    uint_fast64_t sign = (f>>48)&SIGN_MASK(16);
+    uint_fast64_t abs = f&(SIGN_MASK(64)-1);
+
+    if (abs >= ((uint64_t)(D_BIAS+EXP_MAX(16))<<L_MANT))
+	// already Nan or infinity or too big => infinity
+	return (abs > EXP_MASK(64)) ? NOTANUM(16) : (sign | EXP_MASK(16));
+
+    if (abs < ((uint_fast64_t)(F64_BIAS-L_MANT-1)<<L_MANT))
+	// too small => zero
+	return sign;
+
+    uint_fast64_t mant = (f&MANT_MASK(64)) + MANT_MASK(64)
+	+ ((uint64_t)1<<(D_MANT-1)) + ((f>>D_MANT) & 1);
+    uint_fast64_t exp = abs>>L_MANT;
+
+    if (mant >= ((uint_fast64_t)2<<L_MANT))
+    {
+	if (exp >= D_BIAS)
+	    return sign | (((exp-D_BIAS)<<S_MANT) + (mant>>(D_MANT+1)));
+    }
+    else if (exp > D_BIAS)
+	return sign | (((exp-D_BIAS-1)<<S_MANT) + (mant>>D_MANT));
+
+    // subnormal
+    return sign | (mant >> (D_BIAS+D_MANT+1-exp));
+}
+
+#undef D_BIAS
+#undef D_MANT
+*/
+
+
+
+
+
+
+
+
 
 
 int64_t int64_from_float16_zero(float16 f)
@@ -633,6 +725,20 @@ float float_from_float32(float32 f)
     return r.f;
 }
 
+float64 float64_from_double(double f)
+{
+    uf64_t r;
+    r.f = f;
+    return r.u;
+}
+
+float double_from_float64(float64 f)
+{
+    uf64_t r;
+    r.u = f;
+    return r.f;
+}
+
 
 #define MAX_ITER 100000000
 
@@ -646,11 +752,9 @@ uint64_t rand64()
 
 double rand_double()
 {
-    uint64_t	u;
-    double	*p = (double *)&u;
-
-    u = rand64();
-    return *p;
+    uf64_t	a;
+    a.u = rand64();
+    return a.f;
 }
 
 
@@ -661,7 +765,9 @@ int main()
     float16 a, b;
     //float16 b, correct, test;
     int64_t i64;
-
+    float32 a32, b32;
+    float a32f, b32f;
+    float64 a64, b64;
 
     for (i=0; i<0x10000; i++)
     {
@@ -712,13 +818,31 @@ int main()
 	// float16 <-> float64
 
 	b = float16_from_float64(float64_from_float16(a));
-	if (a!=b && b!=F16_NAN)
+	if (a!=b && b!=NOTANUM(16))
         {
 	    printf("%04x (%g float:%g) != %04x (%g)\n",
 		    a, double_from_float16(a), float_from_float16(a),
 		    b, double_from_float16(b));
 	    return 1;
 	}
+	
+	// float32 <-> float64
+	
+	a64 = rand64();
+	a32 = a64;
+	a32f = float_from_float32(a32);
+	a64 = float64_from_float32(a32);
+//	if (float32_from_float(double_from_float64(a64)) != float32_from_float64(a64))
+	if (!(isnan(a32f) && isnan(double_from_float64(a64))) &&
+	    float64_from_double(a32f) != a64)
+        {
+	    printf("float64_from_float32(%08x %g) = %016lx %g != %016lx %g\n",
+		a32, a32f,
+		float64_from_float32(a32), double_from_float64(float64_from_float32(a32)),
+		float64_from_double(a32f), float_from_float32(a32));
+	    return 1;
+	}
+	
 
 /*
 	for (j=0; j<0x10000; j++)
