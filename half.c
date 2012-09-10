@@ -101,7 +101,7 @@ typedef uint64_t float64;
 //#define F16_NAN			0xfe00
 #define F16_MANT_WIDTH		10
 //#define F16_EXP_MAX		0x1f
-#define F16_BIAS		15L
+//#define F16_BIAS		15L
 
 //#define F32_SIGN_MASK		0x80000000
 //#define F32_EXP_MASK		0x7f800000
@@ -110,7 +110,7 @@ typedef uint64_t float64;
 //#define F32_NAN			0xffc00000
 #define F32_MANT_WIDTH		23
 //#define F32_EXP_MAX		0xff
-#define F32_BIAS		127L
+//#define F32_BIAS		127L
 
 //#define F64_SIGN_MASK		0x8000000000000000
 //#define F64_EXP_MASK		0x7ff0000000000000
@@ -119,18 +119,18 @@ typedef uint64_t float64;
 //#define F64_NAN			0xfff8000000000000
 #define F64_MANT_WIDTH		52
 //#define F64_EXP_MAX		0x7ff
-#define F64_BIAS		1023L
+//#define F64_BIAS		1023L
 
 #define F128_MANT_WIDTH		112
-#define F128_BIAS		16383L
+//#define F128_BIAS		16383L
 
 #define _MANT_WIDTH(width)	F ## width ## _MANT_WIDTH
-#define _BIAS(width)		F ## width ## _BIAS
+//#define _BIAS(width)		F ## width ## _BIAS
 #define _UINT_FAST(width)	uint_fast ## width ## _t
 #define _FLOAT(width)		float ## width
 #define _CLZ(width)		clz_ ## width
 #define MANT_WIDTH(width)	_MANT_WIDTH(width)
-#define BIAS(width)		_BIAS(width)
+//#define BIAS(width)		_BIAS(width)
 #define UINT_FAST(width)	_UINT_FAST(width)
 #define FLOAT(width)		_FLOAT(width)
 #define CLZ(width)		_CLZ(width)
@@ -141,6 +141,7 @@ typedef uint64_t float64;
 #define SIGNALLING_MASK(width)	(1L<<(MANT_WIDTH(width)-1))
 #define NOTANUM(width)		((1L<<(width-1))|(((1L<<(width-MANT_WIDTH(width)))-1)<<(MANT_WIDTH(width)-1)))
 #define EXP_MAX(width)		((1L<<(width-1-MANT_WIDTH(width)))-1)
+#define BIAS(width)		((1L<<(width-2-MANT_WIDTH(width)))-1)
 #define EXTRACT_EXP(width, f)	(((f)>>MANT_WIDTH(width))&EXP_MAX(width))
 #define EXTRACT_MANT(width, f)	((f)&MANT_MASK(width))
 
