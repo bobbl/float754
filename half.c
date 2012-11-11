@@ -12,8 +12,8 @@
  * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
  * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
  * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
- * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
- * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
+ * OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
 #include <math.h>
@@ -316,7 +316,7 @@ float16 float16_add(float16 a, float16 b)
     return hi_sign | (((uint64_t)hi_exp<<MANT_WIDTH(16)) + sum);
 }
 
-
+/*
 #define D_BIAS (uint_fast32_t)(BIAS(32)-BIAS(16))
 #define D_MANT (MANT_WIDTH(32)-MANT_WIDTH(16))
 
@@ -370,8 +370,69 @@ float16 float16_from_float32(float32 f)
 }
 #undef D_BIAS
 #undef D_MANT
+*/
+
+#define SMALL 16
+#define BIG 32
+
+float32 float32_from_float16(float16 f)
+{
+    UINT_FAST(BIG) sign = ((UINT_FAST(BIG))f&SIGN_MASK(SMALL))<<(BIG-SMALL);
+    UINT_FAST(SMALL) abs = f&(SIGN_MASK(SMALL)-1);
+    
+    if (abs<=MANT_MASK(SMALL))
+    {
+	if (abs==0) return sign;			// zero
+
+	UINT_FAST(BIG) shift = SMALL-1-CLZ(SMALL)(abs);	// subnormal
+	return sign | (((BIAS(BIG)-BIAS(SMALL)-MANT_WIDTH(SMALL)+shift)<<MANT_WIDTH(BIG)) 
+	    + (abs<<(MANT_WIDTH(BIG)-shift)));
+    }
+    
+    if (abs<EXP_MASK(SMALL))				// representable
+	return (sign | (abs<<(MANT_WIDTH(BIG)-MANT_WIDTH(SMALL))))
+	    + ((BIAS(BIG)-BIAS(SMALL))<<MANT_WIDTH(BIG));
+
+    if (abs==EXP_MASK(SMALL))				// infinity with sign
+	return (sign|EXP_MASK(BIG));
+	
+    return NOTANUM(BIG); 				// NaN
+}
+
+float16 float16_from_float32(float32 f)
+{
+    UINT_FAST(SMALL) sign = (f>>(BIG-SMALL))&SIGN_MASK(SMALL);
+    EXP_TYPE(BIG) exp = ((f>>MANT_WIDTH(BIG))&EXP_MAX(BIG)) - BIAS(BIG) + BIAS(SMALL);
+
+    if (exp >= EXP_MAX(SMALL))
+	// return NaN if already Nan or infinity if infinity or too big
+	return ((f&(SIGN_MASK(BIG)-1)) > EXP_MASK(BIG)) 
+	    ? NOTANUM(SMALL) : (sign | EXP_MASK(SMALL));
+
+    if (exp < BIAS(SMALL)-MANT_WIDTH(BIG)-1)
+	// too small => zero
+	return sign;
+
+    UINT_FAST(BIG) mant = ((f&MANT_MASK(BIG)) + MANT_MASK(BIG)
+	+ (MANT_MASK(BIG)>>(MANT_WIDTH(SMALL)+1)) + 1
+	+ ((f>>(MANT_WIDTH(BIG)-MANT_WIDTH(SMALL))) & 1))
+	>> (MANT_WIDTH(BIG)-MANT_WIDTH(SMALL));
+
+    if (mant >= (MANT_MASK(SMALL)+1)<<1)
+    {
+	if (exp >= 0)
+	    return sign | ((exp<<MANT_WIDTH(SMALL)) + (mant>>1));
+    }
+    else if (exp > 0)
+	return sign | (((exp-1)<<MANT_WIDTH(SMALL)) + mant);
+
+    // subnormal
+    return sign | (mant >> (1-exp));
+}
 
 
+#undef SMALL
+#undef BIG
 #define SMALL 16
 #define BIG 64
 
@@ -460,40 +521,39 @@ float64 float64_from_float32(float32 f)
     return NOTANUM(BIG); 				// NaN
 }
 
-/*
-float16 float16_from_float64(float64 f)
+float32 float32_from_float64(float64 f)
 {
-    uint_fast64_t sign = (f>>48)&SIGN_MASK(16);
-    uint_fast64_t abs = f&(SIGN_MASK(64)-1);
+    UINT_FAST(SMALL) sign = (f>>(BIG-SMALL))&SIGN_MASK(SMALL);
+    EXP_TYPE(BIG) exp = ((f>>MANT_WIDTH(BIG))&EXP_MAX(BIG)) - BIAS(BIG) + BIAS(SMALL);
 
-    if (abs >= ((uint64_t)(D_BIAS+EXP_MAX(16))<<L_MANT))
-	// already Nan or infinity or too big => infinity
-	return (abs > EXP_MASK(64)) ? NOTANUM(16) : (sign | EXP_MASK(16));
+    if (exp >= EXP_MAX(SMALL))
+	// return NaN if already Nan or infinity if infinity or too big
+	return ((f&(SIGN_MASK(BIG)-1)) > EXP_MASK(BIG)) 
+	    ? NOTANUM(SMALL) : (sign | EXP_MASK(SMALL));
 
-    if (abs < ((uint_fast64_t)(F64_BIAS-L_MANT-1)<<L_MANT))
+    if (exp < BIAS(SMALL)-MANT_WIDTH(BIG)-1)
 	// too small => zero
 	return sign;
 
-    uint_fast64_t mant = (f&MANT_MASK(64)) + MANT_MASK(64)
-	+ ((uint64_t)1<<(D_MANT-1)) + ((f>>D_MANT) & 1);
-    uint_fast64_t exp = abs>>L_MANT;
+    UINT_FAST(BIG) mant = ((f&MANT_MASK(BIG)) + MANT_MASK(BIG)
+	+ (MANT_MASK(BIG)>>(MANT_WIDTH(SMALL)+1)) + 1
+	+ ((f>>(MANT_WIDTH(BIG)-MANT_WIDTH(SMALL))) & 1))
+	>> (MANT_WIDTH(BIG)-MANT_WIDTH(SMALL));
 
-    if (mant >= ((uint_fast64_t)2<<L_MANT))
+    if (mant >= (MANT_MASK(SMALL)+1)<<1)
     {
-	if (exp >= D_BIAS)
-	    return sign | (((exp-D_BIAS)<<S_MANT) + (mant>>(D_MANT+1)));
+	if (exp >= 0)
+	    return sign | ((exp<<MANT_WIDTH(SMALL)) + (mant>>1));
     }
-    else if (exp > D_BIAS)
-	return sign | (((exp-D_BIAS-1)<<S_MANT) + (mant>>D_MANT));
+    else if (exp > 0)
+	return sign | (((exp-1)<<MANT_WIDTH(SMALL)) + mant);
 
     // subnormal
-    return sign | (mant >> (D_BIAS+D_MANT+1-exp));
+    return sign | (mant >> (1-exp));
 }
 
-#undef D_BIAS
-#undef D_MANT
-*/
-
+#undef SMALL
+#undef BIG
 
 
 
