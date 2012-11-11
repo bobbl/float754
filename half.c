@@ -33,7 +33,7 @@ typedef uint16_t float16;
 typedef uint32_t float32;
 typedef uint64_t float64;
 
-#define EXC_INVALID_OP	1
+#define EXC_INVALID_OP		1
 #define EXC_INEXACT		2
 
 
@@ -68,12 +68,10 @@ typedef uint64_t float64;
 //#define F128_BIAS		16383L
 
 #define _MANT_WIDTH(width)	F ## width ## _MANT_WIDTH
-//#define _BIAS(width)		F ## width ## _BIAS
 #define _UINT_FAST(width)	uint_fast ## width ## _t
 #define _FLOAT(width)		float ## width
 #define _CLZ(width)		clz_ ## width
 #define MANT_WIDTH(width)	_MANT_WIDTH(width)
-//#define BIAS(width)		_BIAS(width)
 #define UINT_FAST(width)	_UINT_FAST(width)
 #define FLOAT(width)		_FLOAT(width)
 #define CLZ(width)		_CLZ(width)
@@ -316,242 +314,22 @@ float16 float16_add(float16 a, float16 b)
     return hi_sign | (((uint64_t)hi_exp<<MANT_WIDTH(16)) + sum);
 }
 
-/*
-#define D_BIAS (uint_fast32_t)(BIAS(32)-BIAS(16))
-#define D_MANT (MANT_WIDTH(32)-MANT_WIDTH(16))
-
-float32 float32_from_float16(float16 f)
-{
-    uint_fast32_t sign = ((uint_fast32_t)f&SIGN_MASK(16))<<16;
-    uint_fast32_t abs = f&(EXP_MASK(16)|MANT_MASK(16));
-    
-    if (abs<=MANT_MASK(16))
-    {
-	if (abs==0) return sign;		// zero
-
-	uint_fast32_t shift = clz_16(abs);	// subnormal
-	return sign | (((D_BIAS-MANT_WIDTH(16)+16-1-shift)<<MANT_WIDTH(32)) 
-	    + (abs<<(MANT_WIDTH(32)-16+1+shift)));
-    }
-    
-    if (abs>=EXP_MASK(16))			// infinity with sign or NaN
-	return (abs==EXP_MASK(16)) ? (sign|EXP_MASK(32)) : NOTANUM(32);
-
-    return (sign | (abs<<D_MANT)) + (D_BIAS<<MANT_WIDTH(32));
-}
-
-float16 float16_from_float32(float32 f)
-{
-    uint_fast32_t sign = (f>>16)&SIGN_MASK(16);
-    uint_fast32_t abs = f&(EXP_MASK(32)|MANT_MASK(32));
-
-    if (abs >= ((D_BIAS+EXP_MAX(16))<<MANT_WIDTH(32)))
-	// already Nan or infinity or too big => infinity
-	return (abs > EXP_MASK(32)) ? NOTANUM(16) : (sign | EXP_MASK(16));
-
-    if (abs < ((uint_fast32_t)(BIAS(32)-MANT_WIDTH(32)-1)<<MANT_WIDTH(32)))
-	// too small => zero
-	return sign;
-
-    uint_fast32_t mant = (f&MANT_MASK(32)) + MANT_MASK(32)
-	+ ((uint_fast32_t)1<<(D_MANT-1)) + ((f>>D_MANT) & 1);
-    uint_fast32_t exp = abs>>MANT_WIDTH(32);
-
-    if (mant >= ((uint_fast32_t)2<<MANT_WIDTH(32)))
-    {
-	if (exp >= D_BIAS)
-	    return sign | (((exp-D_BIAS)<<MANT_WIDTH(16)) + (mant>>(D_MANT+1)));
-    }
-    else if (exp > D_BIAS)
-	return sign | (((exp-D_BIAS-1)<<MANT_WIDTH(16)) + (mant>>D_MANT));
-
-    // subnormal
-    return sign | (mant >> (D_BIAS+D_MANT+1-exp));
-}
-#undef D_BIAS
-#undef D_MANT
-*/
 
 #define SMALL 16
 #define BIG 32
-
-float32 float32_from_float16(float16 f)
-{
-    UINT_FAST(BIG) sign = ((UINT_FAST(BIG))f&SIGN_MASK(SMALL))<<(BIG-SMALL);
-    UINT_FAST(SMALL) abs = f&(SIGN_MASK(SMALL)-1);
-    
-    if (abs<=MANT_MASK(SMALL))
-    {
-	if (abs==0) return sign;			// zero
-
-	UINT_FAST(BIG) shift = SMALL-1-CLZ(SMALL)(abs);	// subnormal
-	return sign | (((BIAS(BIG)-BIAS(SMALL)-MANT_WIDTH(SMALL)+shift)<<MANT_WIDTH(BIG)) 
-	    + (abs<<(MANT_WIDTH(BIG)-shift)));
-    }
-    
-    if (abs<EXP_MASK(SMALL))				// representable
-	return (sign | (abs<<(MANT_WIDTH(BIG)-MANT_WIDTH(SMALL))))
-	    + ((BIAS(BIG)-BIAS(SMALL))<<MANT_WIDTH(BIG));
-
-    if (abs==EXP_MASK(SMALL))				// infinity with sign
-	return (sign|EXP_MASK(BIG));
-	
-    return NOTANUM(BIG); 				// NaN
-}
-
-float16 float16_from_float32(float32 f)
-{
-    UINT_FAST(SMALL) sign = (f>>(BIG-SMALL))&SIGN_MASK(SMALL);
-    EXP_TYPE(BIG) exp = ((f>>MANT_WIDTH(BIG))&EXP_MAX(BIG)) - BIAS(BIG) + BIAS(SMALL);
-
-    if (exp >= EXP_MAX(SMALL))
-	// return NaN if already Nan or infinity if infinity or too big
-	return ((f&(SIGN_MASK(BIG)-1)) > EXP_MASK(BIG)) 
-	    ? NOTANUM(SMALL) : (sign | EXP_MASK(SMALL));
-
-    if (exp < BIAS(SMALL)-MANT_WIDTH(BIG)-1)
-	// too small => zero
-	return sign;
-
-    UINT_FAST(BIG) mant = ((f&MANT_MASK(BIG)) + MANT_MASK(BIG)
-	+ (MANT_MASK(BIG)>>(MANT_WIDTH(SMALL)+1)) + 1
-	+ ((f>>(MANT_WIDTH(BIG)-MANT_WIDTH(SMALL))) & 1))
-	>> (MANT_WIDTH(BIG)-MANT_WIDTH(SMALL));
-
-    if (mant >= (MANT_MASK(SMALL)+1)<<1)
-    {
-	if (exp >= 0)
-	    return sign | ((exp<<MANT_WIDTH(SMALL)) + (mant>>1));
-    }
-    else if (exp > 0)
-	return sign | (((exp-1)<<MANT_WIDTH(SMALL)) + mant);
-
-    // subnormal
-    return sign | (mant >> (1-exp));
-}
-
-
+#include "conv_f2f.inc.c"
 #undef SMALL
 #undef BIG
+
 #define SMALL 16
 #define BIG 64
-
-float64 float64_from_float16(float16 f)
-{
-    UINT_FAST(BIG) sign = ((UINT_FAST(BIG))f&SIGN_MASK(SMALL))<<(BIG-SMALL);
-    UINT_FAST(SMALL) abs = f&(SIGN_MASK(SMALL)-1);
-    
-    if (abs<=MANT_MASK(SMALL))
-    {
-	if (abs==0) return sign;			// zero
-
-	UINT_FAST(BIG) shift = SMALL-1-CLZ(SMALL)(abs);	// subnormal
-	return sign | (((BIAS(BIG)-BIAS(SMALL)-MANT_WIDTH(SMALL)+shift)<<MANT_WIDTH(BIG)) 
-	    + (abs<<(MANT_WIDTH(BIG)-shift)));
-    }
-    
-    if (abs<EXP_MASK(SMALL))				// representable
-	return (sign | (abs<<(MANT_WIDTH(BIG)-MANT_WIDTH(SMALL))))
-	    + ((BIAS(BIG)-BIAS(SMALL))<<MANT_WIDTH(BIG));
-
-    if (abs==EXP_MASK(SMALL))				// infinity with sign
-	return (sign|EXP_MASK(BIG));
-	
-    return NOTANUM(BIG); 				// NaN
-}
-
-float16 float16_from_float64(float64 f)
-{
-    UINT_FAST(SMALL) sign = (f>>(BIG-SMALL))&SIGN_MASK(SMALL);
-    EXP_TYPE(BIG) exp = ((f>>MANT_WIDTH(BIG))&EXP_MAX(BIG)) - BIAS(BIG) + BIAS(SMALL);
-
-    if (exp >= EXP_MAX(SMALL))
-	// return NaN if already Nan or infinity if infinity or too big
-	return ((f&(SIGN_MASK(BIG)-1)) > EXP_MASK(BIG)) 
-	    ? NOTANUM(SMALL) : (sign | EXP_MASK(SMALL));
-
-    if (exp < BIAS(SMALL)-MANT_WIDTH(BIG)-1)
-	// too small => zero
-	return sign;
-
-    UINT_FAST(BIG) mant = ((f&MANT_MASK(BIG)) + MANT_MASK(BIG)
-	+ (MANT_MASK(BIG)>>(MANT_WIDTH(SMALL)+1)) + 1
-	+ ((f>>(MANT_WIDTH(BIG)-MANT_WIDTH(SMALL))) & 1))
-	>> (MANT_WIDTH(BIG)-MANT_WIDTH(SMALL));
-
-    if (mant >= (MANT_MASK(SMALL)+1)<<1)
-    {
-	if (exp >= 0)
-	    return sign | ((exp<<MANT_WIDTH(SMALL)) + (mant>>1));
-    }
-    else if (exp > 0)
-	return sign | (((exp-1)<<MANT_WIDTH(SMALL)) + mant);
-
-    // subnormal
-    return sign | (mant >> (1-exp));
-}
-
-
+#include "conv_f2f.inc.c"
 #undef SMALL
 #undef BIG
+
 #define SMALL 32
 #define BIG 64
-
-float64 float64_from_float32(float32 f)
-{
-    UINT_FAST(BIG) sign = ((UINT_FAST(BIG))f&SIGN_MASK(SMALL))<<(BIG-SMALL);
-    UINT_FAST(SMALL) abs = f&(SIGN_MASK(SMALL)-1);
-    
-    if (abs<=MANT_MASK(SMALL))
-    {
-	if (abs==0) return sign;			// zero
-
-	UINT_FAST(BIG) shift = SMALL-1-CLZ(SMALL)(abs);	// subnormal
-	return sign | (((BIAS(BIG)-BIAS(SMALL)-MANT_WIDTH(SMALL)+shift)<<MANT_WIDTH(BIG)) 
-	    + (abs<<(MANT_WIDTH(BIG)-shift)));
-    }
-    
-    if (abs<EXP_MASK(SMALL))				// representable
-	return (sign | (abs<<(MANT_WIDTH(BIG)-MANT_WIDTH(SMALL))))
-	    + ((BIAS(BIG)-BIAS(SMALL))<<MANT_WIDTH(BIG));
-
-    if (abs==EXP_MASK(SMALL))				// infinity with sign
-	return (sign|EXP_MASK(BIG));
-	
-    return NOTANUM(BIG); 				// NaN
-}
-
-float32 float32_from_float64(float64 f)
-{
-    UINT_FAST(SMALL) sign = (f>>(BIG-SMALL))&SIGN_MASK(SMALL);
-    EXP_TYPE(BIG) exp = ((f>>MANT_WIDTH(BIG))&EXP_MAX(BIG)) - BIAS(BIG) + BIAS(SMALL);
-
-    if (exp >= EXP_MAX(SMALL))
-	// return NaN if already Nan or infinity if infinity or too big
-	return ((f&(SIGN_MASK(BIG)-1)) > EXP_MASK(BIG)) 
-	    ? NOTANUM(SMALL) : (sign | EXP_MASK(SMALL));
-
-    if (exp < BIAS(SMALL)-MANT_WIDTH(BIG)-1)
-	// too small => zero
-	return sign;
-
-    UINT_FAST(BIG) mant = ((f&MANT_MASK(BIG)) + MANT_MASK(BIG)
-	+ (MANT_MASK(BIG)>>(MANT_WIDTH(SMALL)+1)) + 1
-	+ ((f>>(MANT_WIDTH(BIG)-MANT_WIDTH(SMALL))) & 1))
-	>> (MANT_WIDTH(BIG)-MANT_WIDTH(SMALL));
-
-    if (mant >= (MANT_MASK(SMALL)+1)<<1)
-    {
-	if (exp >= 0)
-	    return sign | ((exp<<MANT_WIDTH(SMALL)) + (mant>>1));
-    }
-    else if (exp > 0)
-	return sign | (((exp-1)<<MANT_WIDTH(SMALL)) + mant);
-
-    // subnormal
-    return sign | (mant >> (1-exp));
-}
-
+#include "conv_f2f.inc.c"
 #undef SMALL
 #undef BIG
 
