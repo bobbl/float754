@@ -22,64 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-    unsigned i, j;
 
-/*
-
-uint_fast16_t clz_16(uint_fast16_t x)
-{
-    x |= (x >> 1);
-    x |= (x >> 2);
-    x |= (x >> 4);
-    x |= (x >> 8);
-
-    // count ones (population count)
-    x -= ((x >> 1) & 0x5555);
-    x = ((x >> 2) & 0x3333) + (x & 0x3333);
-    x = ((x >> 4) + x) & 0x0f0f;
-    x += (x >> 8);
-
-    return (16 - (x & 0x7f));
-}
-
-uint_fast16_t clz_32(uint_fast32_t x)
-{
-    x |= (x >> 1);
-    x |= (x >> 2);
-    x |= (x >> 4);
-    x |= (x >> 8);
-    x |= (x >> 16);
-
-    // count ones (population count)
-    x -= ((x >> 1) & 0x55555555);
-    x = ((x >> 2) & 0x33333333) + (x & 0x33333333);
-    x = ((x >> 4) + x) & 0x0f0f0f0f;
-    x += (x >> 8);
-    x += (x >> 16);
-
-    return (32 - (x & 0x7f));
-}
-
-uint_fast16_t clz_64(uint_fast64_t x)
-{
-    x |= (x >> 1);
-    x |= (x >> 2);
-    x |= (x >> 4);
-    x |= (x >> 8);
-    x |= (x >> 16);
-    x |= (x >> 32);
-
-    // count ones (population count)
-    x -= ((x >> 1) & 0x5555555555555555);
-    x = ((x >> 2) & 0x3333333333333333) + (x & 0x3333333333333333);
-    x = ((x >> 4) + x) & 0x0f0f0f0f0f0f0f0f;
-    x += (x >> 8);
-    x += (x >> 16);
-    x += (x >> 32);
-
-    return (64 - (x & 0x7f));
-}
-*/
 #define clz_64(x) (__builtin_clzl(x))
 #define clz_32(x) (__builtin_clzl(x)-32)
 #define clz_16(x) (__builtin_clzl(x)-48)
@@ -144,6 +87,8 @@ typedef uint64_t float64;
 #define BIAS(width)		((1L<<(width-2-MANT_WIDTH(width)))-1)
 #define EXTRACT_EXP(width, f)	(((f)>>MANT_WIDTH(width))&EXP_MAX(width))
 #define EXTRACT_MANT(width, f)	((f)&MANT_MASK(width))
+
+#define EXP_TYPE(width)		int16_t
 
 
 
@@ -454,45 +399,36 @@ float64 float64_from_float16(float16 f)
     return NOTANUM(BIG); 				// NaN
 }
 
-
-
-
-
-#define D_BIAS (uint_fast64_t)(F64_BIAS-BIAS(16))
-#define D_MANT (F64_MANT_WIDTH-MANT_WIDTH(16))
-#define S_MANT MANT_WIDTH(16)
-#define L_MANT F64_MANT_WIDTH
 float16 float16_from_float64(float64 f)
 {
-    uint_fast64_t sign = (f>>48)&SIGN_MASK(16);
-    uint_fast64_t abs = f&(SIGN_MASK(64)-1);
+    UINT_FAST(SMALL) sign = (f>>(BIG-SMALL))&SIGN_MASK(SMALL);
+    EXP_TYPE(BIG) exp = ((f>>MANT_WIDTH(BIG))&EXP_MAX(BIG)) - BIAS(BIG) + BIAS(SMALL);
 
-    if (abs >= ((uint64_t)(D_BIAS+EXP_MAX(16))<<L_MANT))
-	// already Nan or infinity or too big => infinity
-	return (abs > EXP_MASK(64)) ? NOTANUM(16) : (sign | EXP_MASK(16));
+    if (exp >= EXP_MAX(SMALL))
+	// return NaN if already Nan or infinity if infinity or too big
+	return ((f&(SIGN_MASK(BIG)-1)) > EXP_MASK(BIG)) 
+	    ? NOTANUM(SMALL) : (sign | EXP_MASK(SMALL));
 
-    if (abs < ((uint_fast64_t)(F64_BIAS-L_MANT-1)<<L_MANT))
+    if (exp < BIAS(SMALL)-MANT_WIDTH(BIG)-1)
 	// too small => zero
 	return sign;
 
-    uint_fast64_t mant = (f&MANT_MASK(64)) + MANT_MASK(64)
-	+ ((uint64_t)1<<(D_MANT-1)) + ((f>>D_MANT) & 1);
-    uint_fast64_t exp = abs>>L_MANT;
+    UINT_FAST(BIG) mant = ((f&MANT_MASK(BIG)) + MANT_MASK(BIG)
+	+ (MANT_MASK(BIG)>>(MANT_WIDTH(SMALL)+1)) + 1
+	+ ((f>>(MANT_WIDTH(BIG)-MANT_WIDTH(SMALL))) & 1))
+	>> (MANT_WIDTH(BIG)-MANT_WIDTH(SMALL));
 
-    if (mant >= ((uint_fast64_t)2<<L_MANT))
+    if (mant >= (MANT_MASK(SMALL)+1)<<1)
     {
-	if (exp >= D_BIAS)
-	    return sign | (((exp-D_BIAS)<<S_MANT) + (mant>>(D_MANT+1)));
+	if (exp >= 0)
+	    return sign | ((exp<<MANT_WIDTH(SMALL)) + (mant>>1));
     }
-    else if (exp > D_BIAS)
-	return sign | (((exp-D_BIAS-1)<<S_MANT) + (mant>>D_MANT));
+    else if (exp > 0)
+	return sign | (((exp-1)<<MANT_WIDTH(SMALL)) + mant);
 
     // subnormal
-    return sign | (mant >> (D_BIAS+D_MANT+1-exp));
+    return sign | (mant >> (1-exp));
 }
-
-#undef D_BIAS
-#undef D_MANT
 
 
 #undef SMALL
@@ -763,12 +699,15 @@ double rand_double()
 
 int main()
 {
+    unsigned i, j;
     float16 a, b;
     //float16 b, correct, test;
     int64_t i64;
     float32 a32, b32;
     float a32f, b32f;
     float64 a64, b64;
+
+
 
     for (i=0; i<0x10000; i++)
     {
