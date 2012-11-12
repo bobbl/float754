@@ -1,4 +1,4 @@
-/* Floating point add
+/* Floating point addition and subtraction
  * Licenced under the ISC license (similar to the MIT/Expat license)
  *
  * Copyright (c) 2012 Jörg Mische <bobbl@gmx.de>
@@ -17,13 +17,17 @@
  */
 
 /* Include file that just works when included into a proper C source file.
-   Set the macro width to the bit width of the types. Then the function
-   floatWIDTH() is generated. */
-   
-#define _FUNC_NAME(W) float ## W ## _add
-#define FUNC_NAME(W) _FUNC_NAME(W)
+   Set the macro width to the bit width of the types. Then the functions
+   floatWIDTH_add() and floatWIDTH_sub() are generated. */
 
-FLOAT(WIDTH) FUNC_NAME(WIDTH) (FLOAT(WIDTH) a, FLOAT(WIDTH) b)
+   
+#define _FUNC_ADD(W) float ## W ## _add
+#define FUNC_ADD(W) _FUNC_ADD(W)
+#define _FUNC_SUB(W) float ## W ## _sub
+#define FUNC_SUB(W) _FUNC_SUB(W)
+
+
+FLOAT(WIDTH) FUNC_ADD(WIDTH) (FLOAT(WIDTH) a, FLOAT(WIDTH) b)
 {
     EXP_TYPE(WIDTH) lo_exp = EXTRACT_EXP(WIDTH, a);
     EXP_TYPE(WIDTH) hi_exp = EXTRACT_EXP(WIDTH, b);
@@ -237,7 +241,17 @@ FLOAT(WIDTH) FUNC_NAME(WIDTH) (FLOAT(WIDTH) a, FLOAT(WIDTH) b)
     return hi_sign | (((UINT_FAST(WIDTH))hi_exp<<MANT_WIDTH(WIDTH)) + sum);
 }
 
-#undef _FUNC_NAME
-#undef FUNC_NAME
+
+FLOAT(WIDTH) FUNC_SUB(WIDTH) (FLOAT(WIDTH) a, FLOAT(WIDTH) b)
+{
+    return FUNC_SUB(WIDTH) (a, b ^ SIGN_MASK(WIDTH));
+}
+
+
+#undef _FUNC_ADD
+#undef FUNC_ADD
+#undef _FUNC_SUB
+#undef FUNC_SUB
+
 #undef REM_HALF
 
