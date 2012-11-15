@@ -179,8 +179,39 @@ FLOAT(WIDTH) FUNC_MUL(WIDTH) (FLOAT(WIDTH) a, FLOAT(WIDTH) b)
 	}
 	// not yet complete ?
     }
-	    
-    // TODO: multiplication	
+
+    a_mant |= MANT_MASK(WIDTH)+1;
+    b_mant |= MANT_MASK(WIDTH)+1;
+    a_exp = a_exp + b_exp - BIAS(WIDTH);
+
+    // here a lot of platform dependent optimisation is possible
+    UINT_FAST(2*WIDTH) product = UINT_FAST(2*WIDTH)a_mant * UINT_FAST(2*WIDTH)b_mant;
+    
+    // round to nearest or even
+    UINT_FAST(WIDTH) r_mant = (product >> MANT_WIDTH(WIDTH)) | ((product&MANT_MASK(WIDTH))!=0);
+    
+    if (r_mant >= (2*MANT_MASK(WIDTH)+2)) {
+	r_mant <<= 1;
+	a_exp--;
+    }
+    r_mant &= MANT_MASK(WIDTH);
+    
+    if (r_mant >= EXP_MAX(WIDTH))
+	// overflow => +/- infinity
+	return ((a_mant^b_mant) & MASK_SIGN(WIDTH)) | EXP_MASK(WIDTH);
+
+    if (a_exp <= 0) {
+	if (a_exp <= -MANT_WIDTH(WIDTH))
+	    // +/- zero
+	    return ((a_mant^b_mant)&SIGN_MASK(WIDTH));
+	else
+	    // subnormal
+	    return ((a_mant^b_mant)&SIGN_MASK(WIDTH))
+		| ((r_mant|(MANT_MASK(WIDTH)+1)) >> (1-a_exp))
+    }
+    return ((a_mant^b_mant)&SIGN_MASK(WIDTH))
+	| (a_exp<<MANT_WIDTH(WIDTH))
+	| r_mant
 }
 
 
