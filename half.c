@@ -137,8 +137,51 @@ bool float16_is_nan(float16 a)
 
 
 
+#define _FUNC_MUL(W) float ## W ## _mul
+#define FUNC_MUL(W) _FUNC_MUL(W)
 
 
+FLOAT(WIDTH) FUNC_MUL(WIDTH) (FLOAT(WIDTH) a, FLOAT(WIDTH) b)
+{
+    EXP_TYPE(WIDTH) a_exp = EXTRACT_EXP(WIDTH, a);
+    EXP_TYPE(WIDTH) b_exp = EXTRACT_EXP(WIDTH, b);
+    UINT_FAST(WIDTH) a_mant = a & MANT_MASK(WIDTH);
+    UINT_FAST(WIDTH) b_mant = b & MANT_MASK(WIDTH);
+
+    if (a_exp==EXP_MAX(WIDTH)) {
+/*
+	if (a_mant==0) {
+	    if (b_exp==EXP_MAX(WIDTH)) {
+		if (b_mant==0)
+		    return a ^ (b&SIGN_MASK(WIDTH)); // inf*inf = inf
+		else
+		    return b; // inf*nan = nan
+	    } else if (b_exp==0)
+		return NAN(WIDTH); // inf*0 = nan
+	    else
+		return a ^ (b&SIGN_MASK(WIDTH)); // inf*real = inf
+	}
+	else return NAN(WIDTH); // nan*x = nan
+*/
+	return ((a_mant!=0) || (b_exp==0 || (b&(SIGN_MASK(WIDTH)-1))>EXP_MASK_WIDTH))
+	    ? NAN(WIDTH) // inf*(nan|0) = nan
+	    : a ^ (b&SIGN_MASK(WIDTH)); // inf*(inf|real) = inf
+    } else if (a_exp==0) {
+	if (a_mant==0)
+	    return  (b_exp==EXP_MAX(WIDTH)) 
+		? NAN(WIDTH); // 0*(inf|nan) = nan
+		: ((a ^ b) & SIGN_MASK(WIDTH)); // 0*(0|real) = 0
+
+	// shift denorms into position and adjust exponent
+	while (a_mant<=MANT_MASK(WIDTH)) {
+	    a_mant <<= 1;
+	    a_exp++;
+	}
+	// not yet complete ?
+    }
+	    
+    // TODO: multiplication	
+}
 
 
 
