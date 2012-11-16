@@ -140,7 +140,8 @@ bool float16_is_nan(float16 a)
 #define _FUNC_MUL(W) float ## W ## _mul
 #define FUNC_MUL(W) _FUNC_MUL(W)
 
-
+#define WIDTH 16
+#define WIDTHx2 32
 FLOAT(WIDTH) FUNC_MUL(WIDTH) (FLOAT(WIDTH) a, FLOAT(WIDTH) b)
 {
     EXP_TYPE(WIDTH) a_exp = EXTRACT_EXP(WIDTH, a);
@@ -163,55 +164,84 @@ FLOAT(WIDTH) FUNC_MUL(WIDTH) (FLOAT(WIDTH) a, FLOAT(WIDTH) b)
 	}
 	else return NAN(WIDTH); // nan*x = nan
 */
-	return ((a_mant!=0) || (b_exp==0 || (b&(SIGN_MASK(WIDTH)-1))>EXP_MASK_WIDTH))
-	    ? NAN(WIDTH) // inf*(nan|0) = nan
+	return ((a_mant!=0) || (b_exp==0 || (b&(SIGN_MASK(WIDTH)-1))>EXP_MASK(WIDTH)))
+	    ? NOTANUM(WIDTH) // inf*(nan|0) = nan
 	    : a ^ (b&SIGN_MASK(WIDTH)); // inf*(inf|real) = inf
     } else if (a_exp==0) {
 	if (a_mant==0)
 	    return  (b_exp==EXP_MAX(WIDTH)) 
-		? NAN(WIDTH); // 0*(inf|nan) = nan
+		? NOTANUM(WIDTH) // 0*(inf|nan) = nan
 		: ((a ^ b) & SIGN_MASK(WIDTH)); // 0*(0|real) = 0
 
 	// shift denorms into position and adjust exponent
 	while (a_mant<=MANT_MASK(WIDTH)) {
 	    a_mant <<= 1;
-	    a_exp++;
+	    a_exp--;
 	}
 	// not yet complete ?
-    }
+    } else if (b_exp==EXP_MAX(WIDTH))
+	return (b_mant!=0)
+	    ? NOTANUM(WIDTH) // real*nan = nan
+	    : b ^ (a&SIGN_MASK(WIDTH)); // real*inf = inf
+    else if (b_exp==0) {
+	if (b_mant==0)
+	    return ((a ^ b) & SIGN_MASK(WIDTH)); // real*0 = 0
+
+	// shift denorms into position and adjust exponent
+	while (b_mant<=MANT_MASK(WIDTH)) {
+	    b_mant <<= 1;
+	    b_exp--;
+	}
+	// not yet complete ?
+    } 
+	
+
+
 
     a_mant |= MANT_MASK(WIDTH)+1;
     b_mant |= MANT_MASK(WIDTH)+1;
     a_exp = a_exp + b_exp - BIAS(WIDTH);
 
     // here a lot of platform dependent optimisation is possible
-    UINT_FAST(2*WIDTH) product = UINT_FAST(2*WIDTH)a_mant * UINT_FAST(2*WIDTH)b_mant;
+    UINT_FAST(WIDTHx2) product = (UINT_FAST(WIDTHx2))a_mant * (UINT_FAST(WIDTHx2))b_mant;
     
+    
+    if (product >= (UINT_FAST(WIDTHx2))(2<<(2*MANT_WIDTH(WIDTH)))) {
+	product >>= 1;
+	a_exp++;
+    }
+
+    if (a_exp >= EXP_MAX(WIDTH))
+	// overflow => +/- infinity
+	return ((a_mant^b_mant) & SIGN_MASK(WIDTH)) | EXP_MASK(WIDTH);
+
     // round to nearest or even
     UINT_FAST(WIDTH) r_mant = (product >> MANT_WIDTH(WIDTH)) | ((product&MANT_MASK(WIDTH))!=0);
-    
-    if (r_mant >= (2*MANT_MASK(WIDTH)+2)) {
-	r_mant <<= 1;
-	a_exp--;
-    }
-    r_mant &= MANT_MASK(WIDTH);
-    
-    if (r_mant >= EXP_MAX(WIDTH))
-	// overflow => +/- infinity
-	return ((a_mant^b_mant) & MASK_SIGN(WIDTH)) | EXP_MASK(WIDTH);
 
     if (a_exp <= 0) {
-	if (a_exp <= -MANT_WIDTH(WIDTH))
+	if (a_exp < -MANT_WIDTH(WIDTH))
+{
 	    // +/- zero
 	    return ((a_mant^b_mant)&SIGN_MASK(WIDTH));
-	else
+}
+	else {
 	    // subnormal
-	    return ((a_mant^b_mant)&SIGN_MASK(WIDTH))
-		| ((r_mant|(MANT_MASK(WIDTH)+1)) >> (1-a_exp))
+	    UINT_FAST(WIDTH) rounding = (r_mant << (WIDTH-1+a_exp)) & ((1L<<WIDTH)-1);
+//printf("pre_r_mant=%lx ", r_mant);
+	    r_mant = r_mant >> (1-a_exp);
+//printf("a=%x a_mant=%lx b_mant=%lx product=%lx a_exp=%d r_mant=%lx rounding=%lx ",
+//a, a_mant, b_mant, product, a_exp, r_mant, rounding);
+
+	    rounding = (rounding > (1<<(WIDTH-1))) 
+		| ((rounding == (1<<(WIDTH-1))) & (r_mant & 1));
+//printf("carry=%lx\n", rounding);
+	    return ((a_mant^b_mant)&SIGN_MASK(WIDTH)) | (r_mant+rounding);
+	}
     }
     return ((a_mant^b_mant)&SIGN_MASK(WIDTH))
-	| (a_exp<<MANT_WIDTH(WIDTH))
-	| r_mant
+	| ((UINT_FAST(WIDTH))a_exp<<MANT_WIDTH(WIDTH))
+	| (r_mant&MANT_MASK(WIDTH));
+
 }
 
 
@@ -420,7 +450,8 @@ int main()
     float64 a64, b64;
 //    double a64f, b64f;
 
-
+//printf("%x\n", float16_from_float32(0x33000ffc));
+//return 0;
 
     for (i=0; i<0x10000; i++)
     {
@@ -473,8 +504,9 @@ int main()
 	b = float16_from_float64(float64_from_float16(a));
 	if (a!=b && b!=NOTANUM(16))
         {
-	    printf("%04x (%g float:%g) != %04x (%g)\n",
-		    a, double_from_float16(a), float_from_float16(a),
+	    printf("%04x (%016lx %g float:%g) != %04x (%g)\n",
+		    a, float64_from_float16(a), double_from_float16(a), 
+		    float_from_float16(a),
 		    b, double_from_float16(b));
 	    return 1;
 	}
@@ -497,16 +529,20 @@ int main()
 	}
 	
 
-	for (j=0; j<0x10000; j++)
+#define CORRECT_OP(x, y) 	(x * y)
+#define NEW_OP(x, y) 		float16_mul(x, y)
+//#define CORRECT_OP(x, y) 	(x + y)
+//#define NEW_OP(x, y) 		float16_add(x, y)
+	for (j=0; j<0x1000; j++)
 	{
 	    b=j;
-	    float16 test = float16_add(a, b);
+	    float16 test = NEW_OP(a, b);
 
-	    float sum = float_from_float16(a) + float_from_float16(b);
+	    float sum = CORRECT_OP(float_from_float16(a), float_from_float16(b));
 	    float16 correct = float16_from_float(sum);
 	    if (correct!=test) // works only, as NaN is always default value
 	    {
-		printf("%04x (%g %08x) + %04x (%g %08x) = "
+		printf("%04x (%g %08x) ° %04x (%g %08x) = "
 		    "%04x (%g %08x exact: %g %08x) but: %04x (%g %08x)\n",
 		    a, float_from_float16(a), hex_from_float(float_from_float16(a)),
 		    b, float_from_float16(b), hex_from_float(float_from_float16(b)),
@@ -516,11 +552,11 @@ int main()
 		return 1;
 	    }
 
-	    double sumd = double_from_float16(a) + double_from_float16(b);
+	    double sumd = CORRECT_OP(double_from_float16(a), double_from_float16(b));
 	    correct = float16_from_double(sumd);
 	    if (correct!=test) // works only, as NaN is always default value
 	    {
-		printf("%04x (%g %016lx) + %04x (%g %016lx) = "
+		printf("%04x (%g %016lx) ° %04x (%g %016lx) = "
 		    "%04x (%g %016lx exact: %g) but: %04x (%g)\n",
 		    a, double_from_float16(a), float64_from_float16(a),
 		    b, double_from_float16(b), float64_from_float16(b),
@@ -535,7 +571,8 @@ int main()
 
 
 
-#define MAX_ITER 1000000000
+//#define MAX_ITER 1000000000
+#define MAX_ITER 100
 
 
 
