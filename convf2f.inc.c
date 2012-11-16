@@ -59,7 +59,7 @@ FUNC_HEADER(SMALL, BIG)
 	return ((f&(SIGN_MASK(BIG)-1)) > EXP_MASK(BIG)) 
 	    ? NOTANUM(SMALL) : (sign | EXP_MASK(SMALL));
 
-    if (exp < BIAS(SMALL)-MANT_WIDTH(BIG)-1)
+    if (exp < BIAS(SMALL)-MANT_WIDTH(BIG)-2)
 	// too small => zero
 	return sign;
 
@@ -77,7 +77,12 @@ FUNC_HEADER(SMALL, BIG)
 	return sign | (((exp-1)<<MANT_WIDTH(SMALL)) + mant);
 
     // subnormal
-    return sign | (mant >> (1-exp));
+    mant = (f&MANT_MASK(BIG)) + MANT_MASK(BIG) + 1; // add implicit 1
+    UINT_FAST(BIG) corr = (mant << (1+MANT_WIDTH(SMALL)-1+exp)) & (2*MANT_MASK(BIG)+1);
+    mant >>= MANT_WIDTH(BIG) - MANT_WIDTH(SMALL) + 1 - exp;
+    corr = (corr > (MANT_MASK(BIG)+1)) 
+	| ((corr == (MANT_MASK(BIG)+1)) & (mant & 1));
+    return sign | (mant + corr);
 }
 
 #undef _FUNC_HEADER
