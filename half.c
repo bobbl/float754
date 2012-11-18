@@ -150,29 +150,22 @@ FLOAT(WIDTH) FUNC_MUL(WIDTH) (FLOAT(WIDTH) a, FLOAT(WIDTH) b)
     UINT_FAST(WIDTH) b_mant = b & MANT_MASK(WIDTH);
 
     if (a_exp==EXP_MAX(WIDTH)) {
-	if (a_mant==0) {
-	    if (b_exp==EXP_MAX(WIDTH)) {
-		return (b_mant==0)
-		    ? (a ^ (b&SIGN_MASK(WIDTH))) // inf*inf = inf
-		    : NOTANUM(WIDTH); // inf*nan = nan
-	    } else {
-		return (b_exp==0 && b_mant==0)
-		    ? NOTANUM(WIDTH) // inf*0 = nan
-		    : (a ^ (b&SIGN_MASK(WIDTH))); // inf*real = inf
-	    }
+	if (a_mant==0)
+	{
+	    if ((b_exp==EXP_MAX(WIDTH) && (b_mant==0))
+		    || ((b_exp!=EXP_MAX(WIDTH)) && (b_exp!=0 || b_mant!=0)))
+		return (a ^ (b&SIGN_MASK(WIDTH))); // inf*(inf|real) = inf
 	}
-	else return NOTANUM(WIDTH); // nan*x = nan
-
+	return NOTANUM(WIDTH); // inf*nan = inf*0 = nan*x = nan
 
     } else if (a_exp==0) {
-	if (a_mant==0)
-	    return  (b_exp==EXP_MAX(WIDTH)) 
-		? NOTANUM(WIDTH) // 0*(inf|nan) = nan
-		: ((a ^ b) & SIGN_MASK(WIDTH)); // 0*(0|real) = 0
-	if (b_exp==EXP_MAX(WIDTH))
-	    return (b_mant!=0)
-		? NOTANUM(WIDTH) // real*nan = nan
+	if (b_exp==EXP_MAX(WIDTH)) {
+	    return (a_mant==0 || b_mant!=0)
+		? NOTANUM(WIDTH) // 0*inf = 0*nan = real*nan = nan
 		: b ^ (a&SIGN_MASK(WIDTH)); // real*inf = inf
+	}
+	if (a_mant==0)
+	    return ((a ^ b) & SIGN_MASK(WIDTH)); // 0*(0|real) = 0
 
 	// shift denorms into position and adjust exponent
 	while (a_mant<=MANT_MASK(WIDTH)) {
