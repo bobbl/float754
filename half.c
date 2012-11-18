@@ -150,28 +150,29 @@ FLOAT(WIDTH) FUNC_MUL(WIDTH) (FLOAT(WIDTH) a, FLOAT(WIDTH) b)
     UINT_FAST(WIDTH) b_mant = b & MANT_MASK(WIDTH);
 
     if (a_exp==EXP_MAX(WIDTH)) {
-/*
 	if (a_mant==0) {
 	    if (b_exp==EXP_MAX(WIDTH)) {
-		if (b_mant==0)
-		    return a ^ (b&SIGN_MASK(WIDTH)); // inf*inf = inf
-		else
-		    return b; // inf*nan = nan
-	    } else if (b_exp==0)
-		return NAN(WIDTH); // inf*0 = nan
-	    else
-		return a ^ (b&SIGN_MASK(WIDTH)); // inf*real = inf
+		return (b_mant==0)
+		    ? (a ^ (b&SIGN_MASK(WIDTH))) // inf*inf = inf
+		    : NOTANUM(WIDTH); // inf*nan = nan
+	    } else {
+		return (b_exp==0 && b_mant==0)
+		    ? NOTANUM(WIDTH) // inf*0 = nan
+		    : (a ^ (b&SIGN_MASK(WIDTH))); // inf*real = inf
+	    }
 	}
-	else return NAN(WIDTH); // nan*x = nan
-*/
-	return ((a_mant!=0) || (b_exp==0 || (b&(SIGN_MASK(WIDTH)-1))>EXP_MASK(WIDTH)))
-	    ? NOTANUM(WIDTH) // inf*(nan|0) = nan
-	    : a ^ (b&SIGN_MASK(WIDTH)); // inf*(inf|real) = inf
+	else return NOTANUM(WIDTH); // nan*x = nan
+
+
     } else if (a_exp==0) {
 	if (a_mant==0)
 	    return  (b_exp==EXP_MAX(WIDTH)) 
 		? NOTANUM(WIDTH) // 0*(inf|nan) = nan
 		: ((a ^ b) & SIGN_MASK(WIDTH)); // 0*(0|real) = 0
+	if (b_exp==EXP_MAX(WIDTH))
+	    return (b_mant!=0)
+		? NOTANUM(WIDTH) // real*nan = nan
+		: b ^ (a&SIGN_MASK(WIDTH)); // real*inf = inf
 
 	// shift denorms into position and adjust exponent
 	while (a_mant<=MANT_MASK(WIDTH)) {
@@ -179,6 +180,7 @@ FLOAT(WIDTH) FUNC_MUL(WIDTH) (FLOAT(WIDTH) a, FLOAT(WIDTH) b)
 	    a_exp--;
 	}
 	// not yet complete ?
+	a_exp++;
     } else if (b_exp==EXP_MAX(WIDTH))
 	return (b_mant!=0)
 	    ? NOTANUM(WIDTH) // real*nan = nan
@@ -193,52 +195,65 @@ FLOAT(WIDTH) FUNC_MUL(WIDTH) (FLOAT(WIDTH) a, FLOAT(WIDTH) b)
 	    b_exp--;
 	}
 	// not yet complete ?
+b_exp++;
     } 
 	
 
-
-
     a_mant |= MANT_MASK(WIDTH)+1;
     b_mant |= MANT_MASK(WIDTH)+1;
+
+//printf("a=%x a_mant=%lx a_exp=%d b=%x b_mant=%lx b_exp=%d ",
+//a, a_mant, a_exp, b, b_mant, b_exp);
+
     a_exp = a_exp + b_exp - BIAS(WIDTH);
 
     // here a lot of platform dependent optimisation is possible
     UINT_FAST(WIDTHx2) product = (UINT_FAST(WIDTHx2))a_mant * (UINT_FAST(WIDTHx2))b_mant;
     
-    
     if (product >= (UINT_FAST(WIDTHx2))(2<<(2*MANT_WIDTH(WIDTH)))) {
-	product >>= 1;
+	product = (product >> 1) | (product & 1); // keep overflow bits
 	a_exp++;
     }
 
     if (a_exp >= EXP_MAX(WIDTH))
 	// overflow => +/- infinity
-	return ((a_mant^b_mant) & SIGN_MASK(WIDTH)) | EXP_MASK(WIDTH);
+	return ((a^b) & SIGN_MASK(WIDTH)) | EXP_MASK(WIDTH);
 
-    // round to nearest or even
-    UINT_FAST(WIDTH) r_mant = (product >> MANT_WIDTH(WIDTH)) | ((product&MANT_MASK(WIDTH))!=0);
 
     if (a_exp <= 0) {
-	if (a_exp < -MANT_WIDTH(WIDTH))
-{
+	if (a_exp < -MANT_WIDTH(WIDTH)-1)
 	    // +/- zero
-	    return ((a_mant^b_mant)&SIGN_MASK(WIDTH));
-}
+	    return ((a^b)&SIGN_MASK(WIDTH));
 	else {
 	    // subnormal
-	    UINT_FAST(WIDTH) rounding = (r_mant << (WIDTH-1+a_exp)) & ((1L<<WIDTH)-1);
-//printf("pre_r_mant=%lx ", r_mant);
-	    r_mant = r_mant >> (1-a_exp);
-//printf("a=%x a_mant=%lx b_mant=%lx product=%lx a_exp=%d r_mant=%lx rounding=%lx ",
-//a, a_mant, b_mant, product, a_exp, r_mant, rounding);
+	    UINT_FAST(WIDTH) r_mant = product >> (MANT_WIDTH(WIDTH)-a_exp);
+	    UINT_FAST(WIDTH) corr = product & ((1L << (MANT_WIDTH(WIDTH)-a_exp))-1);
+//printf("product=%lx r_mant=%lx r_exp=%d corr=%lx\n",
+//product, r_mant, a_exp, corr);
+	    if ((r_mant&2)==0)
+		r_mant = (r_mant>>1) + ((corr!=0)&(r_mant&1));
+	    else
+		r_mant = (r_mant>>1) + (r_mant&1);
+	    return ((a^b)&SIGN_MASK(WIDTH)) | r_mant;
 
-	    rounding = (rounding > (1<<(WIDTH-1))) 
-		| ((rounding == (1<<(WIDTH-1))) & (r_mant & 1));
-//printf("carry=%lx\n", rounding);
-	    return ((a_mant^b_mant)&SIGN_MASK(WIDTH)) | (r_mant+rounding);
+
 	}
     }
-    return ((a_mant^b_mant)&SIGN_MASK(WIDTH))
+    // round to nearest or even
+    UINT_FAST(WIDTH) r_mant = product >> (MANT_WIDTH(WIDTH)-1);
+    UINT_FAST(WIDTH) corr = product & ((1L << (MANT_WIDTH(WIDTH)-1))-1);
+    if ((r_mant&2)==0)
+	r_mant = (r_mant>>1) + ((corr!=0)&(r_mant&1));
+    else
+	r_mant = (r_mant>>1) + (r_mant&1);
+    if (r_mant>=(2*MANT_MASK(WIDTH)+2)) { // only == is possible
+	r_mant <<= 1;
+	a_exp++;
+    }
+
+//printf("product=%lx r_mant=%lx r_exp=%d\n",
+//product, r_mant, a_exp);
+    return ((a^b)&SIGN_MASK(WIDTH))
 	| ((UINT_FAST(WIDTH))a_exp<<MANT_WIDTH(WIDTH))
 	| (r_mant&MANT_MASK(WIDTH));
 
@@ -533,7 +548,7 @@ int main()
 #define NEW_OP(x, y) 		float16_mul(x, y)
 //#define CORRECT_OP(x, y) 	(x + y)
 //#define NEW_OP(x, y) 		float16_add(x, y)
-	for (j=0; j<0x1000; j++)
+	for (j=0; j<0x10000; j++)
 	{
 	    b=j;
 	    float16 test = NEW_OP(a, b);
