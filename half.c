@@ -157,13 +157,15 @@ FLOAT(WIDTH) FUNC_MUL(WIDTH) (FLOAT(WIDTH) a, FLOAT(WIDTH) b)
 		return (a ^ (b&SIGN_MASK(WIDTH))); // inf*(inf|real) = inf
 	}
 	return NOTANUM(WIDTH); // inf*nan = inf*0 = nan*x = nan
+    }
+    
+    if (b_exp==EXP_MAX(WIDTH)) {
+	if (b_mant!=0 || (a_exp==0 && a_mant==0))
+	    return NOTANUM(WIDTH); // 0*inf = 0*nan = real*nan = nan
+	return b ^ (a&SIGN_MASK(WIDTH)); // real*inf = inf
+    }
 
-    } else if (a_exp==0) {
-	if (b_exp==EXP_MAX(WIDTH)) {
-	    return (a_mant==0 || b_mant!=0)
-		? NOTANUM(WIDTH) // 0*inf = 0*nan = real*nan = nan
-		: b ^ (a&SIGN_MASK(WIDTH)); // real*inf = inf
-	}
+    if (a_exp==0) {
 	if (a_mant==0)
 	    return ((a ^ b) & SIGN_MASK(WIDTH)); // 0*(0|real) = 0
 
@@ -174,10 +176,7 @@ FLOAT(WIDTH) FUNC_MUL(WIDTH) (FLOAT(WIDTH) a, FLOAT(WIDTH) b)
 	}
 	// not yet complete ?
 	a_exp++;
-    } else if (b_exp==EXP_MAX(WIDTH))
-	return (b_mant!=0)
-	    ? NOTANUM(WIDTH) // real*nan = nan
-	    : b ^ (a&SIGN_MASK(WIDTH)); // real*inf = inf
+    }
     else if (b_exp==0) {
 	if (b_mant==0)
 	    return ((a ^ b) & SIGN_MASK(WIDTH)); // real*0 = 0
@@ -188,7 +187,7 @@ FLOAT(WIDTH) FUNC_MUL(WIDTH) (FLOAT(WIDTH) a, FLOAT(WIDTH) b)
 	    b_exp--;
 	}
 	// not yet complete ?
-b_exp++;
+	b_exp++;
     } 
 	
 
