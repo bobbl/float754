@@ -195,12 +195,14 @@ FLOAT(WIDTH) FUNC_ADD(WIDTH) (FLOAT(WIDTH) a, FLOAT(WIDTH) b)
 		if (hi_exp>=EXP_MAX(WIDTH)-1)
 		    return hi_sign | EXP_MASK(WIDTH);	// infinity
 
-		if ((sum&1) == 0)
-		    sum = sum>>1;			// round down
-		else if (rem == 0)
-		    sum = ((sum>>1)+1) & (~1);    	// round to even
-		else
-		    sum = (sum>>1) + 1;			// round up
+		sum = ROUND(sum, rem);
+
+//		if ((sum&1) == 0)
+//		    sum = sum>>1;			// round down
+//		else if (rem == 0)
+//		    sum = ((sum>>1)+1) & (~1);    	// round to even
+//		else
+//		    sum = (sum>>1) + 1;			// round up
 
 // alternative formulation:
 //		if (((sum&1)!=0) && rem == 0)
