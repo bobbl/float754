@@ -96,7 +96,7 @@ typedef uint64_t float64;
 
 #define ROUND_1(shifted, remains) \
     (((shifted&1) == 0) \
-	? (shifted = shifted>>1) \
+	? (shifted>>1) \
 	: ((remains == 0) \
 	    ? (((shifted>>1)+1) & (~1)) \
 	    : ((shifted>>1) + 1)))
@@ -122,24 +122,25 @@ typedef uint64_t float64;
 
 #define ROUND_6(shifted, remains) \
     ((shifted>>1) + \
-	((shifted&1) & \
+	(shifted & \
 	    (((shifted&2)==0) \
-		? ((remains!=0) \
-		: 1));
+		? (remains!=0) \
+		: 1)))
 
 #define ROUND_7(shifted, remains) \
-    ((shifted>>1) + ((shifted&1) & (((shifted>>1)&1) | (remains!=0)))
+    ((shifted>>1) + ((shifted&1) & ((shifted>>1) | (remains!=0))))
 
 #define ROUND_8(shifted, remains) \
     ((shifted>>1) + ((remains!=0) \
 	? (shifted&1) \
-	: (shifted & (shifted>>1) & 1)
+	: (shifted & (shifted>>1) & 1)))
 
+// probably the fastest alternative
 #define ROUND_9(shifted, remains) \
-    ((shifted>>1) + (shifted & ((remains!=0) ? 1 : (shifted>>1))))
+    ((shifted>>1) + (shifted & ((remains==0) ? ((shifted>>1)&1) : 1)))
 
 
-#define ROUND ROUND_5
+#define ROUND ROUND_9
 
 
 
