@@ -90,6 +90,59 @@ typedef uint64_t float64;
 
 
 
+
+
+
+
+#define ROUND_1(shifted, remains) \
+    (((shifted&1) == 0) \
+	? (shifted = shifted>>1) \
+	: ((remains == 0) \
+	    ? (((shifted>>1)+1) & (~1)) \
+	    : ((shifted>>1) + 1)))
+
+#define ROUND_2(shifted, remains) \
+    ((((shifted&1)!=0) && remains == 0) \
+	? (((shifted>>1) + 1) & (~1)) \
+	: ((shifted>>1) + (shifted&1)))
+
+#define ROUND_3(shifted, remains) \
+    (((shifted>>1) + (shifted&1)) & ((remains==0 && ((shifted&1)!=0)) ? (~1) : (~0)))
+
+#define ROUND_4(shifted, remains) \
+    (((shifted&2)==0) \
+	? ((shifted>>1) + ((remains!=0)&(shifted&1))) \
+	: ((shifted>>1) + (shifted&1)))
+
+#define ROUND_5(shifted, remains) \
+    ((shifted>>1) +  \
+	(((shifted&2)==0) \
+	    ? ((remains!=0)&(shifted&1)) \
+	    : (shifted&1)))
+
+#define ROUND_6(shifted, remains) \
+    ((shifted>>1) + \
+	((shifted&1) & \
+	    (((shifted&2)==0) \
+		? ((remains!=0) \
+		: 1));
+
+#define ROUND_7(shifted, remains) \
+    ((shifted>>1) + ((shifted&1) & (((shifted>>1)&1) | (remains!=0)))
+
+#define ROUND_8(shifted, remains) \
+    ((shifted>>1) + ((remains!=0) \
+	? (shifted&1) \
+	: (shifted & (shifted>>1) & 1)
+
+#define ROUND_9(shifted, remains) \
+    ((shifted>>1) + (shifted & ((remains!=0) ? 1 : (shifted>>1))))
+
+
+#define ROUND ROUND_5
+
+
+
 void raise_exception(int e)
 {
 }
@@ -144,109 +197,84 @@ bool float16_is_nan(float16 a)
 #define WIDTHx2 32
 FLOAT(WIDTH) FUNC_MUL(WIDTH) (FLOAT(WIDTH) a, FLOAT(WIDTH) b)
 {
+    UINT_FAST(WIDTH) a_mant = a & (SIGN_MASK(WIDTH)-1);
+    UINT_FAST(WIDTH) b_mant = b & (SIGN_MASK(WIDTH)-1);
+
+    if (a_mant>=EXP_MASK(WIDTH))
+	return (a_mant==EXP_MASK(WIDTH) && b_mant>0 && b_mant<=EXP_MASK(WIDTH))
+	    ? (a ^ (b&SIGN_MASK(WIDTH))) // inf*inf = inf*real = inf
+	    : NOTANUM(WIDTH); // inf*nan = inf*0 = nan*x = nan
+    
+    if (b_mant>=EXP_MASK(WIDTH))
+	return (b_mant>EXP_MASK(WIDTH) || a_mant==0)
+	    ? NOTANUM(WIDTH) // 0*inf = 0*nan = real*nan = nan
+	    : (b ^ (a&SIGN_MASK(WIDTH))); // real*inf = inf
+
+    if (a_mant==0 || b_mant==0)
+	return ((a ^ b) & SIGN_MASK(WIDTH)); // 0*0 = 0*real = real*0 = 0
+
     EXP_TYPE(WIDTH) a_exp = EXTRACT_EXP(WIDTH, a);
     EXP_TYPE(WIDTH) b_exp = EXTRACT_EXP(WIDTH, b);
-    UINT_FAST(WIDTH) a_mant = a & MANT_MASK(WIDTH);
-    UINT_FAST(WIDTH) b_mant = b & MANT_MASK(WIDTH);
-
-    if (a_exp==EXP_MAX(WIDTH)) {
-	if (a_mant==0)
-	{
-	    if ((b_exp==EXP_MAX(WIDTH) && (b_mant==0))
-		    || ((b_exp!=EXP_MAX(WIDTH)) && (b_exp!=0 || b_mant!=0)))
-		return (a ^ (b&SIGN_MASK(WIDTH))); // inf*(inf|real) = inf
-	}
-	return NOTANUM(WIDTH); // inf*nan = inf*0 = nan*x = nan
-    }
-    
-    if (b_exp==EXP_MAX(WIDTH)) {
-	if (b_mant!=0 || (a_exp==0 && a_mant==0))
-	    return NOTANUM(WIDTH); // 0*inf = 0*nan = real*nan = nan
-	return b ^ (a&SIGN_MASK(WIDTH)); // real*inf = inf
-    }
+    EXP_TYPE(WIDTH) r_exp = a_exp + b_exp - BIAS(WIDTH);
+    a_mant &= MANT_MASK(WIDTH);
+    b_mant &= MANT_MASK(WIDTH);
 
     if (a_exp==0) {
-	if (a_mant==0)
-	    return ((a ^ b) & SIGN_MASK(WIDTH)); // 0*(0|real) = 0
-
 	// shift denorms into position and adjust exponent
+	r_exp++;
 	while (a_mant<=MANT_MASK(WIDTH)) {
 	    a_mant <<= 1;
-	    a_exp--;
+	    r_exp--;
 	}
-	// not yet complete ?
-	a_exp++;
+	// If b is also subnormal, the result is 0 anyway.
+	// This is recognised later.
     }
     else if (b_exp==0) {
-	if (b_mant==0)
-	    return ((a ^ b) & SIGN_MASK(WIDTH)); // real*0 = 0
-
 	// shift denorms into position and adjust exponent
+	r_exp++;
 	while (b_mant<=MANT_MASK(WIDTH)) {
 	    b_mant <<= 1;
-	    b_exp--;
+	    r_exp--;
 	}
-	// not yet complete ?
-	b_exp++;
     } 
-	
-
     a_mant |= MANT_MASK(WIDTH)+1;
     b_mant |= MANT_MASK(WIDTH)+1;
-
-//printf("a=%x a_mant=%lx a_exp=%d b=%x b_mant=%lx b_exp=%d ",
-//a, a_mant, a_exp, b, b_mant, b_exp);
-
-    a_exp = a_exp + b_exp - BIAS(WIDTH);
 
     // here a lot of platform dependent optimisation is possible
     UINT_FAST(WIDTHx2) product = (UINT_FAST(WIDTHx2))a_mant * (UINT_FAST(WIDTHx2))b_mant;
     
     if (product >= (UINT_FAST(WIDTHx2))(2<<(2*MANT_WIDTH(WIDTH)))) {
 	product = (product >> 1) | (product & 1); // keep overflow bits
-	a_exp++;
+	r_exp++;
     }
 
-    if (a_exp >= EXP_MAX(WIDTH))
+    if (r_exp >= EXP_MAX(WIDTH))
 	// overflow => +/- infinity
 	return ((a^b) & SIGN_MASK(WIDTH)) | EXP_MASK(WIDTH);
 
+    if (r_exp <= 0) {
+	if (r_exp < -MANT_WIDTH(WIDTH)-1)
+	    return ((a^b)&SIGN_MASK(WIDTH)); // +/- zero
 
-    if (a_exp <= 0) {
-	if (a_exp < -MANT_WIDTH(WIDTH)-1)
-	    // +/- zero
-	    return ((a^b)&SIGN_MASK(WIDTH));
-	else {
-	    // subnormal
-	    UINT_FAST(WIDTH) r_mant = product >> (MANT_WIDTH(WIDTH)-a_exp);
-	    UINT_FAST(WIDTH) corr = product & ((1L << (MANT_WIDTH(WIDTH)-a_exp))-1);
-//printf("product=%lx r_mant=%lx r_exp=%d corr=%lx\n",
-//product, r_mant, a_exp, corr);
-	    if ((r_mant&2)==0)
-		r_mant = (r_mant>>1) + ((corr!=0)&(r_mant&1));
-	    else
-		r_mant = (r_mant>>1) + (r_mant&1);
-	    return ((a^b)&SIGN_MASK(WIDTH)) | r_mant;
-
-
-	}
+	// subnormal
+	UINT_FAST(WIDTH) r_mant = product >> (MANT_WIDTH(WIDTH)-r_exp);
+	UINT_FAST(WIDTH) remains = product & ((1L << (MANT_WIDTH(WIDTH)-r_exp))-1);
+	return ((a^b)&SIGN_MASK(WIDTH)) | ROUND(r_mant, remains);
     }
+
     // round to nearest or even
     UINT_FAST(WIDTH) r_mant = product >> (MANT_WIDTH(WIDTH)-1);
-    UINT_FAST(WIDTH) corr = product & ((1L << (MANT_WIDTH(WIDTH)-1))-1);
-    if ((r_mant&2)==0)
-	r_mant = (r_mant>>1) + ((corr!=0)&(r_mant&1));
-    else
-	r_mant = (r_mant>>1) + (r_mant&1);
+    UINT_FAST(WIDTH) remains = product & ((1L << (MANT_WIDTH(WIDTH)-1))-1);
+    r_mant = ROUND(r_mant, remains);
     if (r_mant>=(2*MANT_MASK(WIDTH)+2)) { // only == is possible
 	r_mant <<= 1;
-	a_exp++;
+	r_exp++;
     }
 
 //printf("product=%lx r_mant=%lx r_exp=%d\n",
-//product, r_mant, a_exp);
+//product, r_mant, r_exp);
     return ((a^b)&SIGN_MASK(WIDTH))
-	| ((UINT_FAST(WIDTH))a_exp<<MANT_WIDTH(WIDTH))
+	| ((UINT_FAST(WIDTH))r_exp<<MANT_WIDTH(WIDTH))
 	| (r_mant&MANT_MASK(WIDTH));
 
 }
