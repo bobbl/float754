@@ -211,8 +211,9 @@ FLOAT(WIDTH) FUNC_MUL(WIDTH) (FLOAT(WIDTH) a, FLOAT(WIDTH) b)
 	    ? NOTANUM(WIDTH) // 0*inf = 0*nan = real*nan = nan
 	    : (b ^ (a&SIGN_MASK(WIDTH))); // real*inf = inf
 
+    UINT_FAST(WIDTH) r_sign = (a^b) & SIGN_MASK(WIDTH); 
     if (a_mant==0 || b_mant==0)
-	return ((a ^ b) & SIGN_MASK(WIDTH)); // 0*0 = 0*real = real*0 = 0
+	return r_sign; // 0*0 = 0*real = real*0 = 0
 
     EXP_TYPE(WIDTH) a_exp = EXTRACT_EXP(WIDTH, a);
     EXP_TYPE(WIDTH) b_exp = EXTRACT_EXP(WIDTH, b);
@@ -221,22 +222,18 @@ FLOAT(WIDTH) FUNC_MUL(WIDTH) (FLOAT(WIDTH) a, FLOAT(WIDTH) b)
     b_mant &= MANT_MASK(WIDTH);
 
     if (a_exp==0) {
-	// shift denorms into position and adjust exponent
-	r_exp++;
-	while (a_mant<=MANT_MASK(WIDTH)) {
-	    a_mant <<= 1;
-	    r_exp--;
-	}
+	// shift subnormal into position and adjust exponent
+	EXP_TYPE(WIDTH) shift = CLZ(WIDTH)(a_mant)-WIDTH+MANT_WIDTH(WIDTH)+1;
+	r_exp -= shift-1;
+	a_mant <<= shift;
 	// If b is also subnormal, the result is 0 anyway.
 	// This is recognised later.
     }
     else if (b_exp==0) {
-	// shift denorms into position and adjust exponent
-	r_exp++;
-	while (b_mant<=MANT_MASK(WIDTH)) {
-	    b_mant <<= 1;
-	    r_exp--;
-	}
+	// shift subnormal into position and adjust exponent
+	EXP_TYPE(WIDTH) shift = CLZ(WIDTH)(b_mant)-WIDTH+MANT_WIDTH(WIDTH)+1;
+	r_exp -= shift-1;
+	b_mant <<= shift;
     } 
     a_mant |= MANT_MASK(WIDTH)+1;
     b_mant |= MANT_MASK(WIDTH)+1;
@@ -251,16 +248,16 @@ FLOAT(WIDTH) FUNC_MUL(WIDTH) (FLOAT(WIDTH) a, FLOAT(WIDTH) b)
 
     if (r_exp >= EXP_MAX(WIDTH))
 	// overflow => +/- infinity
-	return ((a^b) & SIGN_MASK(WIDTH)) | EXP_MASK(WIDTH);
+	return r_sign | EXP_MASK(WIDTH);
 
     if (r_exp <= 0) {
 	if (r_exp < -MANT_WIDTH(WIDTH)-1)
-	    return ((a^b)&SIGN_MASK(WIDTH)); // +/- zero
+	    return r_sign; // +/- zero
 
 	// subnormal
 	UINT_FAST(WIDTH) r_mant = product >> (MANT_WIDTH(WIDTH)-r_exp);
 	UINT_FAST(WIDTH) remains = product & ((1L << (MANT_WIDTH(WIDTH)-r_exp))-1);
-	return ((a^b)&SIGN_MASK(WIDTH)) | ROUND(r_mant, remains);
+	return r_sign | ROUND(r_mant, remains);
     }
 
     // round to nearest or even
@@ -274,10 +271,9 @@ FLOAT(WIDTH) FUNC_MUL(WIDTH) (FLOAT(WIDTH) a, FLOAT(WIDTH) b)
 
 //printf("product=%lx r_mant=%lx r_exp=%d\n",
 //product, r_mant, r_exp);
-    return ((a^b)&SIGN_MASK(WIDTH))
+    return r_sign
 	| ((UINT_FAST(WIDTH))r_exp<<MANT_WIDTH(WIDTH))
 	| (r_mant&MANT_MASK(WIDTH));
-
 }
 
 
