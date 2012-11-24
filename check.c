@@ -220,94 +220,76 @@ FLOAT(WIDTH) FUNC_MUL(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
     UF(WIDTH) a, b, r;
     a.f = af;
     b.f = bf;
+    r.u = (a.u^b.u) & SIGN_MASK(WIDTH); 
     UINT_FAST(WIDTH) a_mant = a.u & (SIGN_MASK(WIDTH)-1);
     UINT_FAST(WIDTH) b_mant = b.u & (SIGN_MASK(WIDTH)-1);
 
     if (a_mant>=EXP_MASK(WIDTH)) {
 	r.u = (a_mant==EXP_MASK(WIDTH) && b_mant>0 && b_mant<=EXP_MASK(WIDTH))
-	    ? (a.u ^ (b.u&SIGN_MASK(WIDTH))) // inf*inf = inf*real = inf
+	    ? (r.u | EXP_MASK(WIDTH)) // inf*inf = inf*real = inf
 	    : NOTANUM(WIDTH); // inf*nan = inf*0 = nan*x = nan
-	return r.f;
-    }
-    
-    if (b_mant>=EXP_MASK(WIDTH)) {
+
+    } else if (b_mant>=EXP_MASK(WIDTH)) {
 	r.u = (b_mant>EXP_MASK(WIDTH) || a_mant==0)
 	    ? NOTANUM(WIDTH) // 0*inf = 0*nan = real*nan = nan
-	    : (b.u ^ (a.u&SIGN_MASK(WIDTH))); // real*inf = inf
-	return r.f;
-    }
+	    : (r.u | EXP_MASK(WIDTH)); // real*inf = inf
 
-    UINT_FAST(WIDTH) r_sign = (a.u^b.u) & SIGN_MASK(WIDTH); 
-    if (a_mant==0 || b_mant==0) {
-//printf("{%d %d}", a.u, b.u);
-	r.u = r_sign; // 0*0 = 0*real = real*0 = 0
-	return r.f;
-    }
+    } else if (a_mant!=0 && b_mant!=0) { // else 0*0 = 0*real = real*0 = 0
+	EXP_TYPE(WIDTH) a_exp = EXTRACT_EXP(WIDTH, a.u);
+	EXP_TYPE(WIDTH) b_exp = EXTRACT_EXP(WIDTH, b.u);
+	EXP_TYPE(WIDTH) r_exp = a_exp + b_exp - BIAS(WIDTH);
+	a_mant &= MANT_MASK(WIDTH);
+	b_mant &= MANT_MASK(WIDTH);
 
-    EXP_TYPE(WIDTH) a_exp = EXTRACT_EXP(WIDTH, a.u);
-    EXP_TYPE(WIDTH) b_exp = EXTRACT_EXP(WIDTH, b.u);
-    EXP_TYPE(WIDTH) r_exp = a_exp + b_exp - BIAS(WIDTH);
-    a_mant &= MANT_MASK(WIDTH);
-    b_mant &= MANT_MASK(WIDTH);
+	if (a_exp==0) {
+	    // shift subnormal into position and adjust exponent
+	    EXP_TYPE(WIDTH) shift = CLZ(WIDTH)(a_mant)-WIDTH+MANT_WIDTH(WIDTH)+1;
+	    r_exp -= shift-1;
+	    a_mant <<= shift;
+		// If b is also subnormal, the result is 0 anyway.
+		// This is recognised later.
+	} else if (b_exp==0) {
+	    // shift subnormal into position and adjust exponent
+	    EXP_TYPE(WIDTH) shift = CLZ(WIDTH)(b_mant)-WIDTH+MANT_WIDTH(WIDTH)+1;
+	    r_exp -= shift-1;
+	    b_mant <<= shift;
+	} 
+	a_mant |= MANT_MASK(WIDTH)+1;
+	b_mant |= MANT_MASK(WIDTH)+1;
 
-    if (a_exp==0) {
-	// shift subnormal into position and adjust exponent
-	EXP_TYPE(WIDTH) shift = CLZ(WIDTH)(a_mant)-WIDTH+MANT_WIDTH(WIDTH)+1;
-	r_exp -= shift-1;
-	a_mant <<= shift;
-	// If b is also subnormal, the result is 0 anyway.
-	// This is recognised later.
-    }
-    else if (b_exp==0) {
-	// shift subnormal into position and adjust exponent
-	EXP_TYPE(WIDTH) shift = CLZ(WIDTH)(b_mant)-WIDTH+MANT_WIDTH(WIDTH)+1;
-	r_exp -= shift-1;
-	b_mant <<= shift;
-    } 
-    a_mant |= MANT_MASK(WIDTH)+1;
-    b_mant |= MANT_MASK(WIDTH)+1;
-
-    // here a lot of platform dependent optimisation is possible
-    UINT_FAST(WIDTHx2) product = (UINT_FAST(WIDTHx2))a_mant * (UINT_FAST(WIDTHx2))b_mant;
+	// here a lot of platform dependent optimisation is possible
+	UINT_FAST(WIDTHx2) product = (UINT_FAST(WIDTHx2))a_mant * (UINT_FAST(WIDTHx2))b_mant;
     
-    if (product >= (UINT_FAST(WIDTHx2))(2<<(2*MANT_WIDTH(WIDTH)))) {
-	product = (product >> 1) | (product & 1); // keep overflow bits
-	r_exp++;
-    }
-
-    if (r_exp >= EXP_MAX(WIDTH)) {
-	// overflow => +/- infinity
-	r.u = r_sign | EXP_MASK(WIDTH);
-	return r.f;
-    }
-
-    if (r_exp <= 0) {
-	if (r_exp < -MANT_WIDTH(WIDTH)-1) {
-	    r.u = r_sign; // +/- zero
-	    return r.f;
+	if (product >= (UINT_FAST(WIDTHx2))(2<<(2*MANT_WIDTH(WIDTH)))) {
+	    product = (product >> 1) | (product & 1); // keep overflow bits
+	    r_exp++;
 	}
 
-	// subnormal
-	UINT_FAST(WIDTH) r_mant = product >> (MANT_WIDTH(WIDTH)-r_exp);
-	UINT_FAST(WIDTH) remains = product & ((1L << (MANT_WIDTH(WIDTH)-r_exp))-1);
-	r.u = r_sign | ROUND(r_mant, remains);
-	return r.f;
-    }
+	if (r_exp >= EXP_MAX(WIDTH)) {
+	    // overflow => +/- infinity
+	    r.u |= EXP_MASK(WIDTH);
+	
+	} else if (r_exp <= 0) {
+	    if (r_exp >= -MANT_WIDTH(WIDTH)-1) {
+		// subnormal
+		UINT_FAST(WIDTH) r_mant = product >> (MANT_WIDTH(WIDTH)-r_exp);
+		UINT_FAST(WIDTH) remains = product & ((1L << (MANT_WIDTH(WIDTH)-r_exp))-1);
+		r.u |= ROUND(r_mant, remains);
+	    } // else +/-0
+	} else {
+	    // round to nearest or even
+	    UINT_FAST(WIDTH) r_mant = product >> (MANT_WIDTH(WIDTH)-1);
+	    UINT_FAST(WIDTH) remains = product & ((1L << (MANT_WIDTH(WIDTH)-1))-1);
+	    r_mant = ROUND(r_mant, remains);
+	    if (r_mant>=(2*MANT_MASK(WIDTH)+2)) { // only == is possible
+		r_mant <<= 1;
+		r_exp++;
+	    }
 
-    // round to nearest or even
-    UINT_FAST(WIDTH) r_mant = product >> (MANT_WIDTH(WIDTH)-1);
-    UINT_FAST(WIDTH) remains = product & ((1L << (MANT_WIDTH(WIDTH)-1))-1);
-    r_mant = ROUND(r_mant, remains);
-    if (r_mant>=(2*MANT_MASK(WIDTH)+2)) { // only == is possible
-	r_mant <<= 1;
-	r_exp++;
+	    r.u |= ((UINT_FAST(WIDTH))r_exp<<MANT_WIDTH(WIDTH))
+		| (r_mant&MANT_MASK(WIDTH));
+	}
     }
-
-//printf("product=%lx r_mant=%lx r_exp=%d\n",
-//product, r_mant, r_exp);
-    r.u = r_sign
-	| ((UINT_FAST(WIDTH))r_exp<<MANT_WIDTH(WIDTH))
-	| (r_mant&MANT_MASK(WIDTH));
     return r.f;
 }
 
@@ -420,70 +402,6 @@ float32 float32_from_int64(int64_t i)
 
 
 
-/*
-float float_from_float16(float16 f)
-{
-    uf32_t r;
-    r.u = float32_from_float16(f);
-    return r.f;
-}
-
-float16 float16_from_float(float f)
-{
-    uf32_t a;
-    a.f = f;
-    return float16_from_float32(a.u);
-}
-
-unsigned hex_from_float(float f)
-{
-    uf32_t r;
-    r.f = f;
-    return r.u;
-}
-
-double double_from_float16(float16 f)
-{
-    uf64_t r;
-    r.u = float64_from_float16(f);
-    return r.f;
-}
-
-float16 float16_from_double(double f)
-{
-    uf64_t a;
-    a.f = f;
-    return float16_from_float64(a.u);
-}
-
-float32 float32_from_float(float f)
-{
-    uf32_t r;
-    r.f = f;
-    return r.u;
-}
-
-float float_from_float32(float32 f)
-{
-    uf32_t r;
-    r.u = f;
-    return r.f;
-}
-
-float64 float64_from_double(double f)
-{
-    uf64_t r;
-    r.f = f;
-    return r.u;
-}
-
-double double_from_float64(float64 f)
-{
-    uf64_t r;
-    r.u = f;
-    return r.f;
-}
-*/
 
 uint64_t rand64_seed = 0;
 
@@ -493,41 +411,15 @@ uint64_t rand64()
     return rand64_seed;
 }
 
-/*
-double rand_double()
-{
-    uf64_t	a;
-    a.u = rand64();
-    return a.f;
-}
-*/
-
-
 
 int main()
 {
     unsigned i, j;
-/*
-    float16 a, b;
-    //float16 b, correct, test;
-    int64_t i64;
-    float32 a32, b32;
-    float a32f, b32f;
-    float64 a64, b64;
-//    double a64f, b64f;
-*/
     uf16_t a16, b16, c16;
     uf32_t a32, b32, c32;
     uf64_t a64, b64, c64, d64;
     int64_t i64;
     
-/*
-a64.f = 0;
-b64.f = NAN;
-b64.u = 0xfff8000000000000;
-printf("%g\n", float64_from_float16(0)*float64_from_float16(0x7c00));
-*/
-
     for (i=0; i<0x10000; i++)
     {
 	a16.u = i;
