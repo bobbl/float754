@@ -90,11 +90,13 @@ typedef union {
 #define _FLOAT(width)		float ## width
 #define _UF(width)		uf ## width ## _t
 #define _CLZ(width)		clz_ ## width
+#define _UMUL_PPMM(width)	UMUL_PPMM_ ## width
 #define MANT_WIDTH(width)	_MANT_WIDTH(width)
 #define UINT_FAST(width)	_UINT_FAST(width)
 #define FLOAT(width)		_FLOAT(width)
 #define UF(width)		_UF(width)
 #define CLZ(width)		_CLZ(width)
+#define UMUL_PPMM(width)	_UMUL_PPMM(width)
 
 #define SIGN_MASK(width)	(1L<<(width-1))
 #define EXP_MASK(width)		((1L<<(width-1))-(1L<<MANT_WIDTH(width)))
@@ -111,6 +113,35 @@ typedef union {
 
 
 
+#define UMUL_PPMM_16(h, l, u, v) 					\
+  do {									\
+    uint_fast32_t p = (uint_fast32_t)(u) * (uint_fast32_t)(v);		\
+    l = p & 0xffff;							\
+    h = p >> 16;							\
+  } while (0);
+
+#define UMUL_PPMM_32(h, l, u, v) 					\
+  do {									\
+    uint_fast64_t p = (uint_fast64_t)(u) * (uint_fast64_t)(v);		\
+    l = p & 0xffffffff;							\
+    h = p >> 32;							\
+  } while (0);
+
+#define UMUL_PPMM_64(h, l, u, v) 					\
+  do {									\
+    uint_fast64_t ul = u & 0xffffffff;					\
+    uint_fast64_t uh = u >> 32;						\
+    uint_fast64_t vl = v & 0xffffffff;					\
+    uint_fast64_t vh = v >> 32;						\
+    uint_fast64_t plh = ul*vh;						\
+    uint_fast64_t phl = uh*vl;						\
+    plh += phl;								\
+    uint_fast64_t phh = uh*vh + ((plh<phl) ? (uint_fast64_t)1<<32 : 0);	\
+    uint_fast64_t carry = (plh<<32);					\
+    uint_fast64_t pll = ul*vl + carry;					\
+    h = phh + (plh>>32) + ((pll<carry) ? 1 : 0);			\
+    l = pll;								\
+  } while (0);
 
 
 
@@ -159,7 +190,6 @@ typedef union {
 #define ROUND_9(shifted, remains) \
     ((shifted>>1) + (shifted & ((remains==0) ? ((shifted>>1)&1) : 1)))
 
-
 #define ROUND ROUND_9
 
 
@@ -175,7 +205,9 @@ bool float16_is_nan(float16 a)
 }
 
 
-#define STOP 0x80011
+
+
+#define PLATFORM_WIDTH 64
 
 
 #define WIDTH 16
@@ -209,90 +241,6 @@ bool float16_is_nan(float16 a)
 #undef SMALL
 #undef BIG
 
-
-
-#define _FUNC_MUL(W) float ## W ## _mul
-#define FUNC_MUL(W) _FUNC_MUL(W)
-
-#define WIDTH 16
-#define WIDTHx2 32
-FLOAT(WIDTH) FUNC_MUL(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
-{
-    UF(WIDTH) a, b, r;
-    a.f = af;
-    b.f = bf;
-    r.u = (a.u^b.u) & SIGN_MASK(WIDTH); 
-    UINT_FAST(WIDTH) a_mant = a.u & (SIGN_MASK(WIDTH)-1);
-    UINT_FAST(WIDTH) b_mant = b.u & (SIGN_MASK(WIDTH)-1);
-
-    if (a_mant>=EXP_MASK(WIDTH)) {
-	r.u = (a_mant==EXP_MASK(WIDTH) && b_mant>0 && b_mant<=EXP_MASK(WIDTH))
-	    ? (r.u | EXP_MASK(WIDTH)) // inf*inf = inf*real = inf
-	    : NOTANUM(WIDTH); // inf*nan = inf*0 = nan*x = nan
-
-    } else if (b_mant>=EXP_MASK(WIDTH)) {
-	r.u = (b_mant>EXP_MASK(WIDTH) || a_mant==0)
-	    ? NOTANUM(WIDTH) // 0*inf = 0*nan = real*nan = nan
-	    : (r.u | EXP_MASK(WIDTH)); // real*inf = inf
-
-    } else if (a_mant!=0 && b_mant!=0) { // else 0*0 = 0*real = real*0 = 0
-	EXP_TYPE(WIDTH) a_exp = EXTRACT_EXP(WIDTH, a.u);
-	EXP_TYPE(WIDTH) b_exp = EXTRACT_EXP(WIDTH, b.u);
-	EXP_TYPE(WIDTH) r_exp = a_exp + b_exp - BIAS(WIDTH);
-	a_mant &= MANT_MASK(WIDTH);
-	b_mant &= MANT_MASK(WIDTH);
-
-	if (a_exp==0) {
-	    // shift subnormal into position and adjust exponent
-	    EXP_TYPE(WIDTH) shift = CLZ(WIDTH)(a_mant)-WIDTH+MANT_WIDTH(WIDTH)+1;
-	    r_exp -= shift-1;
-	    a_mant <<= shift;
-		// If b is also subnormal, the result is 0 anyway.
-		// This is recognised later.
-	} else if (b_exp==0) {
-	    // shift subnormal into position and adjust exponent
-	    EXP_TYPE(WIDTH) shift = CLZ(WIDTH)(b_mant)-WIDTH+MANT_WIDTH(WIDTH)+1;
-	    r_exp -= shift-1;
-	    b_mant <<= shift;
-	} 
-	a_mant |= MANT_MASK(WIDTH)+1;
-	b_mant |= MANT_MASK(WIDTH)+1;
-
-	// here a lot of platform dependent optimisation is possible
-	UINT_FAST(WIDTHx2) product = (UINT_FAST(WIDTHx2))a_mant * (UINT_FAST(WIDTHx2))b_mant;
-    
-	if (product >= (UINT_FAST(WIDTHx2))(2<<(2*MANT_WIDTH(WIDTH)))) {
-	    product = (product >> 1) | (product & 1); // keep overflow bits
-	    r_exp++;
-	}
-
-	if (r_exp >= EXP_MAX(WIDTH)) {
-	    // overflow => +/- infinity
-	    r.u |= EXP_MASK(WIDTH);
-	
-	} else if (r_exp <= 0) {
-	    if (r_exp >= -MANT_WIDTH(WIDTH)-1) {
-		// subnormal
-		UINT_FAST(WIDTH) r_mant = product >> (MANT_WIDTH(WIDTH)-r_exp);
-		UINT_FAST(WIDTH) remains = product & ((1L << (MANT_WIDTH(WIDTH)-r_exp))-1);
-		r.u |= ROUND(r_mant, remains);
-	    } // else +/-0
-	} else {
-	    // round to nearest or even
-	    UINT_FAST(WIDTH) r_mant = product >> (MANT_WIDTH(WIDTH)-1);
-	    UINT_FAST(WIDTH) remains = product & ((1L << (MANT_WIDTH(WIDTH)-1))-1);
-	    r_mant = ROUND(r_mant, remains);
-	    if (r_mant>=(2*MANT_MASK(WIDTH)+2)) { // only == is possible
-		r_mant <<= 1;
-		r_exp++;
-	    }
-
-	    r.u |= ((UINT_FAST(WIDTH))r_exp<<MANT_WIDTH(WIDTH))
-		| (r_mant&MANT_MASK(WIDTH));
-	}
-    }
-    return r.f;
-}
 
 
 

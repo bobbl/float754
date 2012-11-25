@@ -25,6 +25,8 @@
 #define FUNC_ADD(W) _FUNC_ADD(W)
 #define _FUNC_SUB(W) float ## W ## _sub
 #define FUNC_SUB(W) _FUNC_SUB(W)
+#define _FUNC_MUL(W) float ## W ## _mul
+#define FUNC_MUL(W) _FUNC_MUL(W)
 
 
 FLOAT(WIDTH) FUNC_ADD(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
@@ -220,10 +222,113 @@ FLOAT(WIDTH) FUNC_SUB(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
 }
 
 
+FLOAT(WIDTH) FUNC_MUL(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
+{
+    UF(WIDTH) a, b, r;
+    a.f = af;
+    b.f = bf;
+    r.u = (a.u^b.u) & SIGN_MASK(WIDTH); 
+    UINT_FAST(WIDTH) a_mant = a.u & (SIGN_MASK(WIDTH)-1);
+    UINT_FAST(WIDTH) b_mant = b.u & (SIGN_MASK(WIDTH)-1);
+
+    if (a_mant>=EXP_MASK(WIDTH)) {
+	r.u = (a_mant==EXP_MASK(WIDTH) && b_mant>0 && b_mant<=EXP_MASK(WIDTH))
+	    ? (r.u | EXP_MASK(WIDTH)) // inf*inf = inf*real = inf
+	    : NOTANUM(WIDTH); // inf*nan = inf*0 = nan*x = nan
+
+    } else if (b_mant>=EXP_MASK(WIDTH)) {
+	r.u = (b_mant>EXP_MASK(WIDTH) || a_mant==0)
+	    ? NOTANUM(WIDTH) // 0*inf = 0*nan = real*nan = nan
+	    : (r.u | EXP_MASK(WIDTH)); // real*inf = inf
+
+    } else if (a_mant!=0 && b_mant!=0) { // else 0*0 = 0*real = real*0 = 0
+	EXP_TYPE(WIDTH) a_exp = EXTRACT_EXP(WIDTH, a.u);
+	EXP_TYPE(WIDTH) b_exp = EXTRACT_EXP(WIDTH, b.u);
+	EXP_TYPE(WIDTH) r_exp = a_exp + b_exp - BIAS(WIDTH);
+	a_mant &= MANT_MASK(WIDTH);
+	b_mant &= MANT_MASK(WIDTH);
+
+	if (a_exp==0) {
+	    // shift subnormal into position and adjust exponent
+	    EXP_TYPE(WIDTH) shift = CLZ(WIDTH)(a_mant)-WIDTH+MANT_WIDTH(WIDTH)+1;
+	    r_exp -= shift-1;
+	    a_mant <<= shift;
+		// If b is also subnormal, the result is 0 anyway.
+		// This is recognised later.
+	} else if (b_exp==0) {
+	    // shift subnormal into position and adjust exponent
+	    EXP_TYPE(WIDTH) shift = CLZ(WIDTH)(b_mant)-WIDTH+MANT_WIDTH(WIDTH)+1;
+	    r_exp -= shift-1;
+	    b_mant <<= shift;
+	} 
+	a_mant |= MANT_MASK(WIDTH)+1;
+	b_mant |= MANT_MASK(WIDTH)+1;
+
+	// here a lot of platform dependent optimisation is possible
+#if PLATFORM_WIDTH > WIDTH
+	UINT_FAST(PLATFORM_WIDTH) product
+	    = (UINT_FAST(PLATFORM_WIDTH))a_mant
+	    * (UINT_FAST(PLATFORM_WIDTH))b_mant;
+	if (product >= ((UINT_FAST(PLATFORM_WIDTH))2<<(2*MANT_WIDTH(WIDTH)))) {
+	    product = (product >> 1) | (product & 1); // keep overflow bits
+	    r_exp++;
+	}
+	UINT_FAST(WIDTH) r_mant = product >> (MANT_WIDTH(WIDTH)-1);
+	UINT_FAST(WIDTH) remains = product & ((1L << (MANT_WIDTH(WIDTH)-1))-1);
+#elif PLATFORM_WIDTH == WIDTH
+	UINT_FAST(WIDTH) ph, pl;
+	UMUL_PPMM(WIDTH)(ph, pl, a_mant, b_mant);
+	
+	UINT_FAST(WIDTH) r_mant, remains;
+	if (ph >= (2L<<(2*MANT_WIDTH(WIDTH)-WIDTH))) {
+	    r_mant = (ph << (WIDTH-MANT_WIDTH(WIDTH))) | (pl >> (MANT_WIDTH(WIDTH)));
+	    remains = pl & ((1L << (MANT_WIDTH(WIDTH)))-1);
+	    r_exp++;
+	} else {
+	    r_mant = (ph << (WIDTH-MANT_WIDTH(WIDTH)+1)) | (pl >> (MANT_WIDTH(WIDTH)-1));
+	    remains = pl & ((1L << (MANT_WIDTH(WIDTH)-1))-1);
+	}
+	
+#else
+#error "word width of platform is to small
+#endif
+
+	if (r_exp >= EXP_MAX(WIDTH)) {
+	    // overflow => +/- infinity
+	    r.u |= EXP_MASK(WIDTH);
+	
+	} else if (r_exp <= 0) {
+	    if (r_exp >= -MANT_WIDTH(WIDTH)-1) {
+		// subnormal
+		remains |= r_mant & ((1L << (1-r_exp))-1);
+		r_mant >>= (1-r_exp);
+		r.u |= ROUND(r_mant, remains);
+	    } // else +/-0
+	} else {
+	    // round to nearest or even
+	    r_mant = ROUND(r_mant, remains);
+	    if (r_mant>=(2*MANT_MASK(WIDTH)+2)) { // only == is possible
+		r_mant <<= 1;
+		r_exp++;
+	    }
+
+	    r.u |= ((UINT_FAST(WIDTH))r_exp<<MANT_WIDTH(WIDTH))
+		| (r_mant&MANT_MASK(WIDTH));
+	}
+    }
+    return r.f;
+}
+
+
+
+
+
+
 #undef _FUNC_ADD
 #undef FUNC_ADD
 #undef _FUNC_SUB
 #undef FUNC_SUB
-
+#undef _FUNC_MUL
+#undef FUNC_MUL
 #undef REM_HALF
 
