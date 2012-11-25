@@ -347,12 +347,49 @@ uint64_t rand64()
 }
 
 
-int main()
+int check_f2f()
 {
-    unsigned i, j;
+    unsigned i;
+    uf16_t a16, b16;
+    uf32_t a32;
+    uf64_t a64, b64;
+    
+    for (i=0; i<0x10000; i++)
+    {
+	a16.u = i;
+	
+	// float16 <-> float64
+	a64.f = float64_from_float16(a16.f);
+	b16.f = float16_from_float64(a64.f);
+	if (a16.u!=b16.u && b16.u!=NOTANUM(16))
+        {
+	    printf("float64_from_float16 %04x (%016lx %g) != %04x (%g)\n",
+		    a16.u, a64.u, float64_from_float16(a16.f),
+		    b16.u, float64_from_float16(b16.f));
+	    return 1;
+	}
+	
+	// float32 <-> float64
+	a64.u = rand64();
+	a32.f = a64.f;
+	a64.f = float64_from_float32(a32.f);
+	b64.f = a32.f;
+	if (!(isnan(a32.f) && isnan(a64.f)) && a64.u != b64.u)
+        {
+	    printf("float64_from_float32(%08x %g) = %016lx %g != %016lx %g\n",
+		a32.u, a32.f, a64.u, a64.f, b64.u, b64.f);
+	    return 1;
+	}
+    }
+    return 0;
+}
+
+
+int check_i2f()
+{
+    unsigned i;
     uf16_t a16, b16, c16;
-    uf32_t a32, b32, c32;
-    uf64_t a64, b64, c64, d64;
+    uf32_t b32, c32;
     int64_t i64;
     
     for (i=0; i<0x10000; i++)
@@ -402,62 +439,50 @@ int main()
 		i64, b32.u, b16.f, c32.u, c32.f);
 	    return 1;
 	}
+    }
+    return 0;
+}
 
-	// float16 <-> float64
 
-	a64.f = float64_from_float16(a16.f);
-	b16.f = float16_from_float64(a64.f);
-	if (a16.u!=b16.u && b16.u!=NOTANUM(16))
-        {
-	    printf("float64_from_float16 %04x (%016lx %g) != %04x (%g)\n",
-		    a16.u, a64.u, float64_from_float16(a16.f),
-		    b16.u, float64_from_float16(b16.f));
-	    return 1;
-	}
-	
-	// float32 <-> float64
-	
-	a64.u = rand64();
-	a32.f = a64.f;
-	a64.f = float64_from_float32(a32.f);
-	b64.f = a32.f;
-//	if (float32_from_float(double_from_float64(a64)) != float32_from_float64(a64))
-	if (!(isnan(a32.f) && isnan(a64.f)) && a64.u != b64.u)
-        {
-	    printf("float64_from_float32(%08x %g) = %016lx %g != %016lx %g\n",
-		a32.u, a32.f, a64.u, a64.f, b64.u, b64.f);
-	    return 1;
-	}
-	
 
-#define CORRECT_OP(x, y) 	(x * y)
-#define NEW_OP(x, y) 		float16_mul(x, y)
-//#define CORRECT_OP(x, y) 	(x + y)
-//#define NEW_OP(x, y) 		float16_add(x, y)
+#define OP_ADD	1
+#define OP_MUL	2
+#define OP_FMA	3
+#define OP_DIV	4
+
+int full_check_16(unsigned op)
+{
+    unsigned i, j;
+    uf16_t a16, b16, c16;
+    uf32_t a32, b32, c32;
+    uf64_t a64, b64, c64, d64;
+    int64_t i64;
+    
+    for (i=0; i<0x10000; i++)
+    {
+	a16.u = i;
 	for (j=0; j<0x10000; j++)
 	{
 	    b16.u = j;
-	    uf16_t test, correct;
-	    test.f = NEW_OP(a16.f, b16.f);
-
-/*
-	    double sum = CORRECT_OP(double_from_float16(a), double_from_float16(b));
-	    correct = float16_from_float64(sum);
-	    if (correct!=test.u) // works only, because NaN is always default value
+	    uf16_t test;
+	    double correct;
+	    
+	    switch (op)
 	    {
-		printf("%04x (%g %08x) ° %04x (%g %08x) = "
-		    "%04x (%g %08x exact: %g %08x) but: %04x (%g %08x)\n",
-		    a, float_from_float16(a), hex_from_float(float_from_float16(a)),
-		    b, float_from_float16(b), hex_from_float(float_from_float16(b)),
-		    correct, float_from_float16(correct), hex_from_float(float_from_float16(correct)),
-		    sum, hex_from_float(sum),
-		    test, float_from_float16(test), hex_from_float(float_from_float16(test)));
-		return 1;
+	    case OP_ADD:
+		test.f = float16_add(a16.f, b16.f);
+		correct = float64_from_float16(a16.f) + float64_from_float16(b16.f);
+		break;
+	    case OP_MUL:
+		test.f = float16_mul(a16.f, b16.f);
+		correct = float64_from_float16(a16.f) * float64_from_float16(b16.f);
+		break;
+	    default:
+		printf("Unknown operation\n");
+		exit(1);
 	    }
-*/
-
-	    double sumd = CORRECT_OP(float64_from_float16(a16.f), float64_from_float16(b16.f));
-	    c16.f = float16_from_float64(sumd);
+	    
+	    c16.f = float16_from_float64(correct);
 	    if (c16.u!=test.u) // works only, because NaN is always default value
 	    {
 		a64.f = float64_from_float16(a16.f);
@@ -468,12 +493,14 @@ int main()
 		    a16.u, a64.f, a64.u,
 		    b16.u, b64.f, b64.u,
 		    c16.u, c64.f, c64.u,
-		    sumd, //hex_from_float(sumd),
+		    correct,
 		    test.u, float64_from_float16(test.f));
 		return 1;
 	    }
 	}
     }
+    return 0;
+}
 
 
 
@@ -481,21 +508,71 @@ int main()
 //#define MAX_ITER 1000000000
 #define MAX_ITER 100
 
+int do_iters(unsigned operation, unsigned iterations)
+{
+    unsigned i;
+    uf64_t a64, b64, c64, d64;
 
-    for (i=0; i<MAX_ITER; i++)
+    for (i=0; i<iterations; i++)
     {
 	a64.u = rand64();
 	b64.u = rand64();
 	c64.f = a64.f + b64.f;
 	d64.f = float64_add(a64.f, b64.f);
 	if ((c64.u != d64.u) && !(isnan(c64.f) && isnan(d64.f)))
+	{
 	    printf("%d: %016lx (%g) + %016lx (%g) = %016lx (%g) but: %016lx (%g)\n",
-	    i, a64.u, a64.f, b64.u, b64.f, c64.u, c64.f, d64.u, d64.f);
+		i, a64.u, a64.f, b64.u, b64.f, c64.u, c64.f, d64.u, d64.f);
+	    return 1;
+	}
     }
-
-
-
     return 0;
 }
 
+
+
+
+/* Standard check: ./check -c -i -m -z -t100 */
+
+int main(int argc, char *argv[])
+{
+    int arg;
+    unsigned precision, operation, iterations;
+    
+    for (arg=0; arg<argc; arg++) {
+	char *s = argv[arg];
+	if (s[0]=='-') {
+	    switch (s[1])
+	    {
+	    case 'h': precision = 16; break;
+	    case 's': precision = 32; break;
+	    case 'd': precision = 64; break;
+	    case 'q': precision = 128; break;
+
+	    case 'a': operation = OP_ADD; break;
+	    case 'm': operation = OP_MUL; break;
+	    case 'f': operation = OP_FMA; break;
+	    case 'v': operation = OP_DIV; break;
+
+	    case 'c': check_f2f(); break;
+	    case 'i': check_i2f(); break;
+	    
+	    case 'z': full_check_16(operation); break;
+	    case 't':
+		if (sscanf(s+2, "%d", &iterations) != 1) {
+        	    printf("Number of connections expected.\n");
+        	    return 1;
+        	}
+        	do_iters(operation, iterations);
+    		break;
+    
+	     	    
+	    default:
+		printf("Unknown argument '%c'\n", s[1]);
+		return 1;
+	    }
+	}
+    }
+    return 0;
+}			    
 
