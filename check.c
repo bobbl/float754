@@ -16,6 +16,7 @@
  * OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <assert.h>
 #include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -337,37 +338,29 @@ int64_t int64_from_float32_zero(float32 ff)
 
 float16 float16_from_int64(int64_t i)
 {
-    uint16_t sign=0;
-    uf16_t r;
+    uf16_t r; r.u=0;
     
     if (i<0) {
 	if (i <= -(1L<<(EXP_MAX(16)-BIAS(16)))) {
 	    r.u = SIGN_MASK(16) | EXP_MASK(16); // - infinity
 	    return r.f;
 	}
-	sign = SIGN_MASK(16);
+	r.u = SIGN_MASK(16);
 	i = -i;
-    } else {
-	if (i==0) {
-	    r.u = 0;
-	    return r.f;
-	}
-	if (i >= (1L<<(EXP_MAX(16)-BIAS(16)))) {
-    	    r.u = EXP_MASK(16); // + infinity
-    	    return r.f;
-    	}
+    } else if (i==0) {
+	return r.f;
+    } else if (i >= (1L<<(EXP_MAX(16)-BIAS(16)))) {
+    	r.u = EXP_MASK(16); // + infinity
+    	return r.f;
     }
 
     uint_fast16_t shift = clz_16(i);
 	// highest representable value is smaller than 2^15, therefore
 	// clz_16() is sufficient, other cases are catched in the if-clause
 	// and return infinity
-    uint_fast16_t mant = (i<<shift)&0x7fff;
 
-    // rounding
-    mant = SHR_NEAREST_EVEN(mant, 16-1-MANT_WIDTH(16));
-
-    r.u = sign | (((BIAS(16)+16-1-shift)<<MANT_WIDTH(16)) + mant);
+    r.u |= ((BIAS(16)+16-1-shift)<<MANT_WIDTH(16))
+	+ SHR_NEAREST_EVEN((i<<shift)&0x7fff, 16-1-MANT_WIDTH(16));
     return r.f;
 	// the + instead of a | guarantees that in the case of an overflow
 	// by the rounding the exponent is increased by 1
@@ -376,26 +369,20 @@ float16 float16_from_int64(int64_t i)
 
 float32 float32_from_int64(int64_t i)
 {
-    uf32_t r;
-    
-    r.u = 0;
+    uf32_t r; r.u = 0;
+
     if (i<0) {
 	r.u = SIGN_MASK(32);
 	i = -i;
-    } else if (i==0) {
-	return r.f;
-    }
-
-    uint_fast64_t shift = clz_64(i);
-    uint_fast64_t mant = (i<<shift)&0x7fffffffffffffff;
-
-    // rounding
-    mant = SHR_NEAREST_EVEN(mant, 64-1-MANT_WIDTH(32));
-
-    r.u |= (((BIAS(32)+64-1-shift)<<MANT_WIDTH(32)) + mant);
-    return r.f;
+    } 
+    if (i!=0) {
+	uint_fast64_t shift = clz_64(i);
+	r.u |= ((BIAS(32)+64-1-shift)<<MANT_WIDTH(32)) 
+	    + SHR_NEAREST_EVEN((i<<shift)&0x7fffffffffffffff, 64-1-MANT_WIDTH(32));
 	// the + instead of a | guarantees that in the case of an overflow
 	// by the rounding the exponent is increased by 1
+    }
+    return r.f;
 }
 
 
