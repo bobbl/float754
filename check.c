@@ -1,4 +1,4 @@
-/* Half precision floating point emulation
+/* Check various floating point emulation
  * Licenced under the ISC license (similar to the MIT/Expat license)
  *
  * Copyright (c) 2011-2012 Jörg Mische <bobbl@gmx.de>
@@ -532,7 +532,8 @@ int do_iters(unsigned operation, unsigned iterations)
 
 
 
-/* Standard check: ./check -c -i -m -z -t100 */
+/* Standard check: ./check -c -i -m -z -t100 
+                   ./check -a -z -t100 */
 
 int main(int argc, char *argv[])
 {

@@ -169,6 +169,10 @@ FLOAT(WIDTH) FUNC_ADD(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
 		// simplifies the normalisation, but overflow checks are needed
 		sum = hi_mant + lo_mant;
 
+//if (a.u==0x5401 && b.u==0x7bff)
+//    printf("sum=%lx rem=%lx hi_mant=%lx lo_mant=%lx hi_exp=%d lo_exp=%d\n",
+//	sum, rem, hi_mant, lo_mant, hi_exp, lo_exp);
+
 		if (sum < (2L<<MANT_WIDTH(WIDTH))) {		// no bit overflow
 		    if (rem == REM_HALF)
 			sum = (sum+1) & (~1);    		// round to even
@@ -180,7 +184,7 @@ FLOAT(WIDTH) FUNC_ADD(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
 			// Now the leading 1 must be masked out. But it is more efficient to
 			// decrement the exponent by 1 and then add the implicit 1.
 		} else {					// 1 bit overflow
-		    r.u |=  (hi_exp>EXP_MAX(WIDTH))
+		    r.u |=  (hi_exp>=EXP_MAX(WIDTH)-1)
 			? EXP_MASK(WIDTH)	// infinity
 			: (((UINT_FAST(WIDTH))hi_exp<<MANT_WIDTH(WIDTH)) + ROUND(sum, rem));
 			    // Now the leading 1 must be masked out. But it is more efficient
