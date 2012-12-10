@@ -156,42 +156,42 @@ FLOAT(WIDTH) FUNC_ADD(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
 	    else
     		lo_mant |= 1L<<MANT_WIDTH(WIDTH); // insert implicit 1
 
+	    if (((a.u ^ b.u) & SIGN_MASK(WIDTH)) == 0) {
+		// same sign
+		// simplifies the normalisation, but overflow checks are needed
+
+		sum = (lo_mant >> diff_exp) + hi_mant;
+		if (sum < (1L<<MANT_WIDTH(WIDTH))) {		// no bit overflow
+		    lo_mant <<= 1;
+		    sum = (lo_mant >> diff_exp) + 2*hi_mant;
+		} else if (hi_exp<EXP_MAX(WIDTH)-1) {		// 1 bit overflow
+		    sum += (1L<<MANT_WIDTH(WIDTH));
+		} else {					
+		    r.u |= EXP_MASK(WIDTH); // infinity
+		    return r.f;
+		}
+		UINT_FAST(WIDTH) rem = (lo_mant << (MANT_WIDTH(WIDTH)+2-diff_exp))
+		    & ((MANT_MASK(WIDTH)<<2)|3);
+		r.u |= ((UINT_FAST(WIDTH))hi_exp<<MANT_WIDTH(WIDTH)) + ROUND(sum, rem);
+		    // Now the leading 1 must be masked out. But it is more efficient
+		    // to decrement the exponent by 1 and then add the implicit 1.
+
+//if (a.u==0x0000 && b.u==0x0400)
+//    printf("sum=%lx rem=%lx hi_mant=%lx lo_mant=%lx hi_exp=%d lo_exp=%d\n",
+//	sum, rem, hi_mant, lo_mant, hi_exp, lo_exp);
+
+	    } else {
+		// not the same sign
+
 
 #define REM_HALF (2L<<MANT_WIDTH(WIDTH))
+
 	    UINT_FAST(WIDTH) rem = (lo_mant << ((MANT_WIDTH(WIDTH)+2)-diff_exp)) 
 		& ((MANT_MASK(WIDTH)<<2)|3);
 
 	    lo_mant >>= diff_exp;
 	    hi_mant |= 1L<<MANT_WIDTH(WIDTH);
 
-	    if (((a.u ^ b.u) & SIGN_MASK(WIDTH)) == 0) {
-		// same sign
-		// simplifies the normalisation, but overflow checks are needed
-		sum = hi_mant + lo_mant;
-
-//if (a.u==0x5401 && b.u==0x7bff)
-//    printf("sum=%lx rem=%lx hi_mant=%lx lo_mant=%lx hi_exp=%d lo_exp=%d\n",
-//	sum, rem, hi_mant, lo_mant, hi_exp, lo_exp);
-
-		if (sum < (2L<<MANT_WIDTH(WIDTH))) {		// no bit overflow
-		    if (rem == REM_HALF)
-			sum = (sum+1) & (~1);    		// round to even
-		    else if (rem > REM_HALF)
-			sum++;				// round up
-		    // else round down (nothing to do)
-
-		    r.u |= (((UINT_FAST(WIDTH))(hi_exp-1)<<MANT_WIDTH(WIDTH)) + sum);
-			// Now the leading 1 must be masked out. But it is more efficient to
-			// decrement the exponent by 1 and then add the implicit 1.
-		} else {					// 1 bit overflow
-		    r.u |=  (hi_exp>=EXP_MAX(WIDTH)-1)
-			? EXP_MASK(WIDTH)	// infinity
-			: (((UINT_FAST(WIDTH))hi_exp<<MANT_WIDTH(WIDTH)) + ROUND(sum, rem));
-			    // Now the leading 1 must be masked out. But it is more efficient
-			    // to decrement the exponent by 1 and then add the implicit 1.
-		}
-	    } else {
-		// not the same sign
 		sum = hi_mant - lo_mant - ((rem!=0) ? 1 : 0);
 
 		uint_fast8_t zeros = CLZ(WIDTH)(sum) - (WIDTH-1-MANT_WIDTH(WIDTH));
