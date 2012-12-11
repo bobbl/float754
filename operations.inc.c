@@ -176,38 +176,30 @@ FLOAT(WIDTH) FUNC_ADD(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
 		    // Now the leading 1 must be masked out. But it is more efficient
 		    // to decrement the exponent by 1 and then add the implicit 1.
 
-//if (a.u==0x0000 && b.u==0x0400)
-//    printf("sum=%lx rem=%lx hi_mant=%lx lo_mant=%lx hi_exp=%d lo_exp=%d\n",
-//	sum, rem, hi_mant, lo_mant, hi_exp, lo_exp);
-
 	    } else {
 		// not the same sign
 
+		UINT_FAST(WIDTH) rem = (lo_mant << ((MANT_WIDTH(WIDTH)+2)-diff_exp)) 
+		    & ((MANT_MASK(WIDTH)<<2)|3);
 
-#define REM_HALF (2L<<MANT_WIDTH(WIDTH))
-
-	    UINT_FAST(WIDTH) rem = (lo_mant << ((MANT_WIDTH(WIDTH)+2)-diff_exp)) 
-		& ((MANT_MASK(WIDTH)<<2)|3);
-
-	    lo_mant >>= diff_exp;
-	    hi_mant |= 1L<<MANT_WIDTH(WIDTH);
-
-		sum = hi_mant - lo_mant - ((rem!=0) ? 1 : 0);
+		sum = (hi_mant | (1L<<MANT_WIDTH(WIDTH))) - (lo_mant>>diff_exp) 
+		     - ((rem!=0) ? 1 : 0);
 
 		uint_fast8_t zeros = CLZ(WIDTH)(sum) - (WIDTH-1-MANT_WIDTH(WIDTH));
 
-		sum = (sum << zeros) | (((-rem) & ((MANT_MASK(WIDTH)<<2)|3))
-		    >> ((MANT_WIDTH(WIDTH)+2)-zeros));
-		rem = (rem << zeros) & ((MANT_MASK(WIDTH)<<2)|3);
-		if (rem == REM_HALF)
-    		    sum = (sum+1) & (~1);    		// round to even
-		else if (rem != 0 && rem < REM_HALF)
-		    sum++;
+		sum = (sum << (zeros+1)) | 		    
+		    ((((-lo_mant) << (zeros+1)) >> diff_exp) & ((1L<<(1+zeros))-1) );
+		rem = (lo_mant << (MANT_WIDTH(WIDTH)+2-diff_exp+zeros+1)) 
+		       & ((MANT_MASK(WIDTH)<<2)|3);
+
+//if (a.u==0x0000 && b.u==0x8400)
+//    printf("sum=%lx rem=%lx hi_mant=%lx lo_mant=%lx hi_exp=%d lo_exp=%d\n",
+//	sum, rem, hi_mant, lo_mant, hi_exp, lo_exp);
 
 		hi_exp = hi_exp - zeros;
 		r.u |= (hi_exp < 1)
-		    ? (sum >> (1-hi_exp))
-		    : (((UINT_FAST(WIDTH))(hi_exp-1)<<MANT_WIDTH(WIDTH)) + sum);
+		    ? (ROUND(sum, rem) >> (1-hi_exp))
+		    : (((UINT_FAST(WIDTH))(hi_exp-1)<<MANT_WIDTH(WIDTH)) + ROUND(sum, rem));
 			// Now the leading 1 must be masked out. But it is more efficient to
 			// decrement the exponent by 1 and then add the implicit 1.
 	    }
@@ -334,5 +326,4 @@ FLOAT(WIDTH) FUNC_MUL(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
 #undef FUNC_SUB
 #undef _FUNC_MUL
 #undef FUNC_MUL
-#undef REM_HALF
 
