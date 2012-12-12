@@ -40,69 +40,65 @@ FLOAT(WIDTH) FUNC_ADD(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
     EXP_TYPE(WIDTH) diff_exp = lo_exp - hi_exp;
 
     if (diff_exp == 0) {
+	// same exponent
 	if (hi_exp == EXP_MAX(WIDTH)) {
 	    // infinity or NaN
 	    r.u = (a.u==b.u && (a.u & MANT_MASK(WIDTH))==0)
 		? a.u // inf+inf = inf | -inf-inf = -inf
 		: NOTANUM(WIDTH);
 
-	} else {
-	    // same exponent
-	    r.u = a.u & SIGN_MASK(WIDTH);
-
-	    if (((a.u ^ b.u) & SIGN_MASK(WIDTH)) == 0)
-	    {
-		// both numbers have the same sign -> addition
-		if (hi_exp == EXP_MAX(WIDTH)-1) {
-		    // by the addition the exponent is increased by 1
-		    // and then it is too big 
-		    r.u |= EXP_MASK(WIDTH);
-		} else if (hi_exp == 0) {
-		    // both numbers are subnormal. If there is an overflow, i.e. the
-		    // sum is normal, bit 52 of the result is set, which means that
-		    // the exponent is 1 and not 0. Hence the conversion from subnormal
-		    // to normal works automatically, only the sign has to be added.
-		    r.u = a.u + (b.u & MANT_MASK(WIDTH));
-		} else {
-		    // because of the two implicit ones the result has one digit
-		    // to much, i.e. the mantissa has to be shifted right by 1
-		    // and the exponent must be increased by 1
-		    INT_FAST(WIDTH) sum 
-			= (a.u&MANT_MASK(WIDTH)) + (b.u&MANT_MASK(WIDTH));
-		    r.u = (a.u|MANT_MASK(WIDTH)) + 1 + ROUND(sum, 0);
-		}
+	} else if (((a.u ^ b.u) & SIGN_MASK(WIDTH)) == 0) {
+	    // both numbers have the same sign -> addition
+	    if (hi_exp == EXP_MAX(WIDTH)-1) {
+		// by the addition the exponent is increased by 1
+		// and then it is too big 
+		r.u = (a.u & SIGN_MASK(WIDTH)) | EXP_MASK(WIDTH);
+	    } else if (hi_exp == 0) {
+		// both numbers are subnormal. If there is an overflow, i.e. the
+		// sum is normal, bit 52 of the result is set, which means that
+		// the exponent is 1 and not 0. Hence the conversion from subnormal
+		// to normal works automatically, only the sign has to be added.
+		r.u = a.u + (b.u & MANT_MASK(WIDTH));
 	    } else {
-		// numbers have different signs -> subtraction
-		INT_FAST(WIDTH) sum = EXTRACT_MANT(WIDTH, a.u) - EXTRACT_MANT(WIDTH, b.u);
+		// because of the two implicit ones the result has one digit
+		// to much, i.e. the mantissa has to be shifted right by 1
+		// and the exponent must be increased by 1
+		INT_FAST(WIDTH) sum 
+		    = (a.u&MANT_MASK(WIDTH)) + (b.u&MANT_MASK(WIDTH));
+		r.u = (a.u|MANT_MASK(WIDTH)) + 1 + ROUND(sum, 0);
+	    }
+	} else {
+	    // numbers have different signs -> subtraction
+	    INT_FAST(WIDTH) sum = EXTRACT_MANT(WIDTH, a.u) - EXTRACT_MANT(WIDTH, b.u);
 
-		if (sum == 0) {
-		    r.u = 0;
+	    if (sum == 0) {
+		r.u = 0;
+	    } else {
+		if (sum < 0) {
+	    	    r.u = b.u & SIGN_MASK(WIDTH);
+		    sum = -sum;
 		} else {
-		    if (sum < 0) {
-	    		r.u ^= SIGN_MASK(WIDTH);
-			sum = -sum;
-		    }
+		    r.u = a.u & SIGN_MASK(WIDTH);
+		}
 
-		    // very easy for subnormal numbers
-		    if (hi_exp == 0) {
-			r.u |= sum;
-
-		    } else {
-			// normalise mantissa
-			uint_fast8_t zeros = CLZ(WIDTH)(sum) - (WIDTH-1-MANT_WIDTH(WIDTH));
-			sum <<= zeros;
-    			hi_exp -= zeros;
-			r.u |= (hi_exp<1)
-			    ? (sum >> (1-hi_exp)) // subnormal result
-			    : (((UINT_FAST(WIDTH))(hi_exp-1)<<MANT_WIDTH(WIDTH)) + sum);
-				// Now the leading 1 must be masked out. But it is more efficient to
-				// decrement the exponent by 1 and then add the implicit 1.
-		    }
+		// very easy for subnormal numbers
+		if (hi_exp == 0) {
+		    r.u |= sum;
+		} else {
+		    // normalise mantissa
+		    uint_fast8_t zeros = CLZ(WIDTH)(sum) - (WIDTH-1-MANT_WIDTH(WIDTH));
+		    sum <<= zeros;
+    		    hi_exp -= zeros;
+		    r.u |= (hi_exp<1)
+			? (sum >> (1-hi_exp)) // subnormal result
+			: (((UINT_FAST(WIDTH))(hi_exp-1)<<MANT_WIDTH(WIDTH)) + sum);
+			    // Now the leading 1 must be masked out. But it is more efficient to
+			    // decrement the exponent by 1 and then add the implicit 1.
 		}
 	    }
 	}
+
     } else {
-	INT_FAST(WIDTH) sum;
 	UINT_FAST(WIDTH) lo_mant, hi_mant;
 	
 	if (diff_exp > 0) {
@@ -123,15 +119,10 @@ FLOAT(WIDTH) FUNC_ADD(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
 
 	if (hi_exp == EXP_MAX(WIDTH)) {
 	    if (hi_mant!=0) {
-		if ((hi_mant & SIGNALLING_MASK(WIDTH))==0)
-	    	    raise_exception(EXC_INVALID_OP);        // signalling NaN
-		r.u = NOTANUM(WIDTH);			// NaN
-	    } // else infinity
+		r.u = NOTANUM(WIDTH); // x+nan = nan
+	    } // x+inf = inf
 
-	} else if (diff_exp > MANT_WIDTH(WIDTH)+2) {		// lo much too low
-	    if (lo_exp!=0 || lo_mant!=0)
-		raise_exception(EXC_INEXACT);
-	} else {
+	} else if (diff_exp <= MANT_WIDTH(WIDTH)+2) { // lo not too low
 	    // from now on, only the sign of r.u is needed
 	    r.u &= SIGN_MASK(WIDTH);
 
@@ -143,8 +134,7 @@ FLOAT(WIDTH) FUNC_ADD(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
 	    if (((a.u ^ b.u) & SIGN_MASK(WIDTH)) == 0) {
 		// same sign
 		// simplifies the normalisation, but overflow checks are needed
-
-		sum = (lo_mant >> diff_exp) + hi_mant;
+		INT_FAST(WIDTH) sum = (lo_mant >> diff_exp) + hi_mant;
 		if (sum < (BIGONE<<MANT_WIDTH(WIDTH))) {		// no bit overflow
 		    lo_mant <<= 1;
 		    sum = (lo_mant >> diff_exp) + 2*hi_mant;
@@ -162,8 +152,9 @@ FLOAT(WIDTH) FUNC_ADD(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
 	    } else {
 		// not the same sign
 		UINT_FAST(WIDTH) rem;
-		sum = (hi_mant | (BIGONE<<MANT_WIDTH(WIDTH))) - (lo_mant>>diff_exp)
-		     - (((lo_mant & ((BIGONE<<(diff_exp))-1))!=0) ? 1 : 0);
+		INT_FAST(WIDTH) sum = (hi_mant | (BIGONE<<MANT_WIDTH(WIDTH)))
+		    - (lo_mant>>diff_exp)
+		    - (((lo_mant & ((BIGONE<<(diff_exp))-1))!=0) ? 1 : 0);
 
 		if (diff_exp > 1) {
 		    if (sum < (BIGONE<<MANT_WIDTH(WIDTH))) {
@@ -175,11 +166,11 @@ FLOAT(WIDTH) FUNC_ADD(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
 			rem = lo_mant & ((BIGONE<<(diff_exp-1))-1);
 		    }
 		} else {
-		    uint_fast8_t zeros = CLZ(WIDTH)(sum) +MANT_WIDTH(WIDTH)-WIDTH+2;
-
-		    // for LLVM clz(0)=clz(1)+1, but for gcc it is undefined,
+		    uint_fast8_t zeros = (sum==0)
+			? MANT_WIDTH(WIDTH)+2
+			: CLZ(WIDTH)(sum) + MANT_WIDTH(WIDTH) - WIDTH + 2;
+		    // in LLVM clz(0)=clz(1)+1, but in gcc it is undefined,
 		    // hence we must deal with this special case
-		    if (sum==0) zeros = MANT_WIDTH(WIDTH)+2;
 
 		    sum = (sum << zeros)
 			| (((-lo_mant) << (zeros-diff_exp)) & ((BIGONE<<zeros)-1));
@@ -192,7 +183,7 @@ FLOAT(WIDTH) FUNC_ADD(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
 			// Now the leading 1 must be masked out. But it is more efficient to
 			// decrement the exponent by 1 and then add the implicit 1.
 	    }
-	}
+	} // else lo much to low, return hi
     }
     return r.f;
 
