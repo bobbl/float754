@@ -23,11 +23,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-
+// for LLVM clz(0)=clz(1)+1, but for gcc it is undefined
 #define clz_64(x) (__builtin_clzl(x))
 #define clz_32(x) (__builtin_clzl(x)-32)
 #define clz_16(x) (__builtin_clzl(x)-48)
-
 
 
 typedef uint16_t float16;
@@ -86,30 +85,31 @@ typedef union {
 //#define F128_BIAS		16383L
 
 #define _MANT_WIDTH(width)	F ## width ## _MANT_WIDTH
+#define _INT_FAST(width)	int_fast ## width ## _t
 #define _UINT_FAST(width)	uint_fast ## width ## _t
 #define _FLOAT(width)		float ## width
 #define _UF(width)		uf ## width ## _t
 #define _CLZ(width)		clz_ ## width
 #define _UMUL_PPMM(width)	UMUL_PPMM_ ## width
 #define MANT_WIDTH(width)	_MANT_WIDTH(width)
+#define INT_FAST(width)		_INT_FAST(width)
 #define UINT_FAST(width)	_UINT_FAST(width)
 #define FLOAT(width)		_FLOAT(width)
 #define UF(width)		_UF(width)
 #define CLZ(width)		_CLZ(width)
 #define UMUL_PPMM(width)	_UMUL_PPMM(width)
 
-#define SIGN_MASK(width)	(1L<<(width-1))
-#define EXP_MASK(width)		((1L<<(width-1))-(1L<<MANT_WIDTH(width)))
-#define MANT_MASK(width)	((1L<<MANT_WIDTH(width))-1)
-#define SIGNALLING_MASK(width)	(1L<<(MANT_WIDTH(width)-1))
-#define NOTANUM(width)		((1L<<(width-1))|(((1L<<(width-MANT_WIDTH(width)))-1)<<(MANT_WIDTH(width)-1)))
+#define SIGN_MASK(width)	((UINT_FAST(width))1<<(width-1))
+#define EXP_MASK(width)		(((UINT_FAST(width))1<<(width-1))-((UINT_FAST(width))1<<MANT_WIDTH(width)))
+#define MANT_MASK(width)	(((UINT_FAST(width))1<<MANT_WIDTH(width))-1)
+#define SIGNALLING_MASK(width)	((UINT_FAST(width))1<<(MANT_WIDTH(width)-1))
+#define NOTANUM(width)		(((UINT_FAST(width))1<<(width-1))|((((UINT_FAST(width))1<<(width-MANT_WIDTH(width)))-1)<<(MANT_WIDTH(width)-1)))
 #define EXP_MAX(width)		((1L<<(width-1-MANT_WIDTH(width)))-1)
 #define BIAS(width)		((1L<<(width-2-MANT_WIDTH(width)))-1)
 #define EXTRACT_EXP(width, f)	(((f)>>MANT_WIDTH(width))&EXP_MAX(width))
 #define EXTRACT_MANT(width, f)	((f)&MANT_MASK(width))
 
 #define EXP_TYPE(width)		int16_t
-
 
 
 
@@ -436,7 +436,7 @@ int check_i2f()
 	if (b32.u != c32.u)
 	{
 	    printf("float16_from_int64(%ld) = %04x %g != %04x %g\n",
-		i64, b32.u, b16.f, c32.u, c32.f);
+		i64, b32.u, b32.f, c32.u, c32.f);
 	    return 1;
 	}
     }
@@ -528,8 +528,6 @@ int do_iters(unsigned operation, unsigned iterations)
     }
     return 0;
 }
-
-
 
 
 /* Standard check: ./check -c -i -m -z -t100 

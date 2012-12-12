@@ -28,6 +28,7 @@
 #define _FUNC_MUL(W) float ## W ## _mul
 #define FUNC_MUL(W) _FUNC_MUL(W)
 
+#define BIGONE ((UINT_FAST(WIDTH))1)
 
 FLOAT(WIDTH) FUNC_ADD(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
 {
@@ -37,40 +38,21 @@ FLOAT(WIDTH) FUNC_ADD(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
     EXP_TYPE(WIDTH) lo_exp = EXTRACT_EXP(WIDTH, a.u);
     EXP_TYPE(WIDTH) hi_exp = EXTRACT_EXP(WIDTH, b.u);
     EXP_TYPE(WIDTH) diff_exp = lo_exp - hi_exp;
-    int_fast16_t sum;
-
 
     if (diff_exp == 0) {
 	if (hi_exp == EXP_MAX(WIDTH)) {
 	    // infinity or NaN
-	    if ( ((a.u|b.u) & MANT_MASK(WIDTH)) == 0) {
-		// two times infinity (mantissa==0)
-		if (a.u != b.u) { // already equal except the sign
-		    // infinity minus infinity raises an error
-		    raise_exception(EXC_INVALID_OP);
-		    r.u = NOTANUM(WIDTH);
-		} else {
-		    r.u = a.u;
-		}
-	    } else {
-		if ( ((a.u&b.u) & SIGNALLING_MASK(WIDTH)) == 0)
-		    // one of the two NaNs is signalling 
-		    // (highest bit of the mantissa==0)
-		    raise_exception(EXC_INVALID_OP);
-		r.u = NOTANUM(WIDTH);
-	    }
+	    r.u = (a.u==b.u && (a.u & MANT_MASK(WIDTH))==0)
+		? a.u // inf+inf = inf | -inf-inf = -inf
+		: NOTANUM(WIDTH);
 
 	} else {
 	    // same exponent
-	    UINT_FAST(WIDTH) a_mant = EXTRACT_MANT(WIDTH, a.u);
-	    UINT_FAST(WIDTH) b_mant = EXTRACT_MANT(WIDTH, b.u);
 	    r.u = a.u & SIGN_MASK(WIDTH);
 
 	    if (((a.u ^ b.u) & SIGN_MASK(WIDTH)) == 0)
 	    {
 		// both numbers have the same sign -> addition
-		sum = a_mant + b_mant;
-
 		if (hi_exp == EXP_MAX(WIDTH)-1) {
 		    // by the addition the exponent is increased by 1
 		    // and then it is too big 
@@ -80,17 +62,18 @@ FLOAT(WIDTH) FUNC_ADD(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
 		    // sum is normal, bit 52 of the result is set, which means that
 		    // the exponent is 1 and not 0. Hence the conversion from subnormal
 		    // to normal works automatically, only the sign has to be added.
-		    r.u |= sum;
+		    r.u = a.u + (b.u & MANT_MASK(WIDTH));
 		} else {
 		    // because of the two implicit ones the result has one digit
 		    // to much, i.e. the mantissa has to be shifted right by 1
 		    // and the exponent must be increased by 1
-		    r.u |= ((UINT_FAST(WIDTH))(hi_exp+1)<<MANT_WIDTH(WIDTH)) 
-			+ ((sum + ((sum>>1)&1)) >> 1);
+		    INT_FAST(WIDTH) sum 
+			= (a.u&MANT_MASK(WIDTH)) + (b.u&MANT_MASK(WIDTH));
+		    r.u = (a.u|MANT_MASK(WIDTH)) + 1 + ROUND(sum, 0);
 		}
 	    } else {
 		// numbers have different signs -> subtraction
-		sum = a_mant - b_mant;
+		INT_FAST(WIDTH) sum = EXTRACT_MANT(WIDTH, a.u) - EXTRACT_MANT(WIDTH, b.u);
 
 		if (sum == 0) {
 		    r.u = 0;
@@ -119,7 +102,9 @@ FLOAT(WIDTH) FUNC_ADD(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
 	    }
 	}
     } else {
+	INT_FAST(WIDTH) sum;
 	UINT_FAST(WIDTH) lo_mant, hi_mant;
+	
 	if (diff_exp > 0) {
 	    hi_exp += diff_exp;
 	    lo_exp -= diff_exp;
@@ -147,62 +132,60 @@ FLOAT(WIDTH) FUNC_ADD(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
 	    if (lo_exp!=0 || lo_mant!=0)
 		raise_exception(EXC_INEXACT);
 	} else {
-
 	    // from now on, only the sign of r.u is needed
 	    r.u &= SIGN_MASK(WIDTH);
 
 	    if (lo_exp == 0)
     		diff_exp--; // lo subnormal
 	    else
-    		lo_mant |= 1L<<MANT_WIDTH(WIDTH); // insert implicit 1
+    		lo_mant |= BIGONE<<MANT_WIDTH(WIDTH); // insert implicit 1
 
 	    if (((a.u ^ b.u) & SIGN_MASK(WIDTH)) == 0) {
 		// same sign
 		// simplifies the normalisation, but overflow checks are needed
 
 		sum = (lo_mant >> diff_exp) + hi_mant;
-		if (sum < (1L<<MANT_WIDTH(WIDTH))) {		// no bit overflow
+		if (sum < (BIGONE<<MANT_WIDTH(WIDTH))) {		// no bit overflow
 		    lo_mant <<= 1;
 		    sum = (lo_mant >> diff_exp) + 2*hi_mant;
 		} else if (hi_exp<EXP_MAX(WIDTH)-1) {		// 1 bit overflow
-		    sum += (1L<<MANT_WIDTH(WIDTH));
+		    sum += (BIGONE<<MANT_WIDTH(WIDTH));
 		} else {					
 		    r.u |= EXP_MASK(WIDTH); // infinity
 		    return r.f;
 		}
-		UINT_FAST(WIDTH) rem = lo_mant & ((1L<<(diff_exp))-1);
+		UINT_FAST(WIDTH) rem = lo_mant & ((BIGONE<<(diff_exp))-1);
 		r.u |= ((UINT_FAST(WIDTH))hi_exp<<MANT_WIDTH(WIDTH)) + ROUND(sum, rem);
 		    // Now the leading 1 must be masked out. But it is more efficient
 		    // to decrement the exponent by 1 and then add the implicit 1.
 
 	    } else {
 		// not the same sign
-
 		UINT_FAST(WIDTH) rem;
-		sum = (hi_mant | (1L<<MANT_WIDTH(WIDTH))) - (lo_mant>>diff_exp)
-		     - (((lo_mant & ((1L<<(diff_exp))-1))!=0) ? 1 : 0);
+		sum = (hi_mant | (BIGONE<<MANT_WIDTH(WIDTH))) - (lo_mant>>diff_exp)
+		     - (((lo_mant & ((BIGONE<<(diff_exp))-1))!=0) ? 1 : 0);
 
 		if (diff_exp > 1) {
-		    if (sum < (1L<<MANT_WIDTH(WIDTH))) {
+		    if (sum < (BIGONE<<MANT_WIDTH(WIDTH))) {
 			sum = (sum << 2) | (((-lo_mant) >> (diff_exp-2)) & 3);
-			rem = lo_mant & ((1L<<(diff_exp-2))-1);
+			rem = lo_mant & ((BIGONE<<(diff_exp-2))-1);
 			hi_exp = hi_exp - 1;
 		    } else {
 		        sum = (sum << 1) | (((-lo_mant) >> (diff_exp-1)) & 1);
-			rem = lo_mant & ((1L<<(diff_exp-1))-1);
+			rem = lo_mant & ((BIGONE<<(diff_exp-1))-1);
 		    }
 		} else {
 		    uint_fast8_t zeros = CLZ(WIDTH)(sum) +MANT_WIDTH(WIDTH)-WIDTH+2;
+
+		    // for LLVM clz(0)=clz(1)+1, but for gcc it is undefined,
+		    // hence we must deal with this special case
+		    if (sum==0) zeros = MANT_WIDTH(WIDTH)+2;
+
 		    sum = (sum << zeros)
-			| (((-lo_mant) << (zeros-diff_exp)) & ((1L<<zeros)-1));
+			| (((-lo_mant) << (zeros-diff_exp)) & ((BIGONE<<zeros)-1));
 		    rem = 0;
 		    hi_exp = hi_exp - zeros + 1;
 		}
-		
-//if (a.u==0x0000 && b.u==0x8400)
-//    printf("sum=%lx rem=%lx hi_mant=%lx lo_mant=%lx hi_exp=%d lo_exp=%d\n",
-//	sum, rem, hi_mant, lo_mant, hi_exp, lo_exp);
-
 		r.u |= (hi_exp < 1)
 		    ? (ROUND(sum, rem) >> (1-hi_exp))
 		    : (((UINT_FAST(WIDTH))(hi_exp-1)<<MANT_WIDTH(WIDTH)) + ROUND(sum, rem));
@@ -212,6 +195,10 @@ FLOAT(WIDTH) FUNC_ADD(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
 	}
     }
     return r.f;
+
+//if (a.u==0x3000 && b.u==0xafff)
+//    printf("sum=%lx rem=%lx hi_mant=%lx lo_mant=%lx hi_exp=%d lo_exp=%d\n",
+//	sum, rem, hi_mant, lo_mant, hi_exp, lo_exp);
 }
 
 
@@ -276,7 +263,7 @@ FLOAT(WIDTH) FUNC_MUL(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
 	    r_exp++;
 	}
 	UINT_FAST(WIDTH) r_mant = product >> (MANT_WIDTH(WIDTH)-1);
-	UINT_FAST(WIDTH) remains = product & ((1L << (MANT_WIDTH(WIDTH)-1))-1);
+	UINT_FAST(WIDTH) remains = product & ((BIGONE << (MANT_WIDTH(WIDTH)-1))-1);
 #elif PLATFORM_WIDTH == WIDTH
 	UINT_FAST(WIDTH) ph, pl;
 	UMUL_PPMM(WIDTH)(ph, pl, a_mant, b_mant);
@@ -284,15 +271,15 @@ FLOAT(WIDTH) FUNC_MUL(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
 	UINT_FAST(WIDTH) r_mant, remains;
 	if (ph >= (2L<<(2*MANT_WIDTH(WIDTH)-WIDTH))) {
 	    r_mant = (ph << (WIDTH-MANT_WIDTH(WIDTH))) | (pl >> (MANT_WIDTH(WIDTH)));
-	    remains = pl & ((1L << (MANT_WIDTH(WIDTH)))-1);
+	    remains = pl & ((BIGONE << (MANT_WIDTH(WIDTH)))-1);
 	    r_exp++;
 	} else {
 	    r_mant = (ph << (WIDTH-MANT_WIDTH(WIDTH)+1)) | (pl >> (MANT_WIDTH(WIDTH)-1));
-	    remains = pl & ((1L << (MANT_WIDTH(WIDTH)-1))-1);
+	    remains = pl & ((BIGONE << (MANT_WIDTH(WIDTH)-1))-1);
 	}
 	
 #else
-#error "word width of platform is to small
+#error "word width of platform is to small"
 #endif
 
 	if (r_exp >= EXP_MAX(WIDTH)) {
@@ -302,7 +289,7 @@ FLOAT(WIDTH) FUNC_MUL(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
 	} else if (r_exp <= 0) {
 	    if (r_exp >= -MANT_WIDTH(WIDTH)-1) {
 		// subnormal
-		remains |= r_mant & ((1L << (1-r_exp))-1);
+		remains |= r_mant & ((BIGONE << (1-r_exp))-1);
 		r_mant >>= (1-r_exp);
 		r.u |= ROUND(r_mant, remains);
 	    } // else +/-0
@@ -325,7 +312,6 @@ FLOAT(WIDTH) FUNC_MUL(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
 
 
 
-
 #undef _FUNC_ADD
 #undef FUNC_ADD
 #undef _FUNC_SUB
@@ -333,3 +319,4 @@ FLOAT(WIDTH) FUNC_MUL(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
 #undef _FUNC_MUL
 #undef FUNC_MUL
 
+#undef BIGONE
