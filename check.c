@@ -504,6 +504,58 @@ int full_check_16(unsigned op)
 
 
 
+float16 float16_from512(unsigned u)
+{
+    uf16_t x;
+    x.u = (rand64() & 0x10fc)
+	| ((u>>6)<<13) | (((u>>2)&15)<<8) | (u&3);
+    return x.f;
+}
+
+int fma_check(unsigned precision)
+{
+    unsigned i, j, k;
+    uf16_t a16, b16, c16;
+    
+    for (i=0; i<512; i++) {
+	a16.u = float16_from512(i);
+	for (j=0; j<512; j++) {
+	    b16.u = float16_from512(j);
+	    for (k=0; k<512; k++) {
+		c16.u = float16_from512(k);
+
+		uf16_t test;
+		uf64_t correct64;
+		uf16_t correct16;
+		test.f = float16_fma(a16.f, b16.f, c16.f);
+		correct64.f =  (float64_from_float16(a16.f) * float64_from_float16(b16.f))
+		    + float64_from_float16(c16.f);
+		correct16.f = float16_from_float64(correct64.f);
+		if (correct16.u!=test.u) { // works only, because NaN is always default value
+		    uf64_t a64, b64, c64;
+		    a64.f = float64_from_float16(a16.f);
+		    b64.f = float64_from_float16(b16.f);
+		    c64.f = float64_from_float16(c16.f);
+		    printf("%04x (%g %016lx) * %04x (%g %016lx) + %04x (%g %016lx) = "
+			"%04x (%g %016lx) but: %04x (%g)\n",
+			a16.u, a64.f, a64.u,
+			b16.u, b64.f, b64.u,
+			c16.u, c64.f, c64.u,
+			correct16.u, correct64.f, correct64.u,
+			test.u, float64_from_float16(test.f));
+		    return 1;
+		}
+	    }
+	}
+    }
+    return 0;
+}
+
+
+
+
+
+
 
 //#define MAX_ITER 1000000000
 #define MAX_ITER 100
@@ -557,6 +609,7 @@ int main(int argc, char *argv[])
 	    case 'i': check_i2f(); break;
 	    
 	    case 'z': full_check_16(operation); break;
+	    case 'y': fma_check(precision); break;
 	    case 't':
 		if (sscanf(s+2, "%d", &iterations) != 1) {
         	    printf("Number of connections expected.\n");
