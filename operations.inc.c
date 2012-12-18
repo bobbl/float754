@@ -302,7 +302,6 @@ FLOAT(WIDTH) FUNC_MUL(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf)
 }
 
 
-#if 0
 
 FLOAT(WIDTH) FUNC_FMA(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf, FLOAT(WIDTH) cf)
 {
@@ -322,19 +321,19 @@ FLOAT(WIDTH) FUNC_FMA(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf, FLOAT(WIDTH) cf)
 		    || ((c_mant^r.u) == EXP_MASK(WIDTH))) // inf with same sign
 		? (r.u | EXP_MASK(WIDTH)) // inf+0 = inf+real = inf+inf = inf
 		: NOTANUM(WIDTH); // inf+nan = inf-inf = nan
-	else
+	} else {
 	    r.u = NOTANUM(WIDTH); // inf*nan+x = inf*0+x = nan*x+x = nan
-
+	}
     } else if (b_mant>=EXP_MASK(WIDTH)) {
-	if (b_mant==EXP_MASK(WIDTH) && a_mant!=0)
+	if (b_mant==EXP_MASK(WIDTH) && a_mant!=0) {
 	    // real*inf+x = inf+x
 	    r.u = ((c_mant<EXP_MASK(WIDTH)) // 0|real
 		    || ((c_mant^r.u) == EXP_MASK(WIDTH))) // inf with same sign
 		? (r.u | EXP_MASK(WIDTH)) 
 		: NOTANUM(WIDTH); // inf+nan = inf-inf = nan
-	else
+	} else {
 	    r.u = NOTANUM(WIDTH); // 0*nan = real*nan = 0*inf = nan
-
+	}
     } else if (a_mant==0 || b_mant==0) { // 0*0+x = 0*real+x = real*0+x = x
 	r.u = c.u;
 
@@ -460,7 +459,7 @@ FLOAT(WIDTH) FUNC_FMA(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf, FLOAT(WIDTH) cf)
 			    r_exp++;
 			}
 			r.u |= ((UINT_FAST(WIDTH))(r_exp)<<MANT_WIDTH(WIDTH)) 
-			    + ROUND(sum, 0);
+			    + ROUND(r_mant, 0);
 			// r_exp+1 is done by implicit one in sum
 		    }
 		} else {
@@ -494,116 +493,151 @@ FLOAT(WIDTH) FUNC_FMA(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf, FLOAT(WIDTH) cf)
 			}
 		    }
 		}
-	    } else {
-			    
-/* FROM HERE TODO */
+	    } else if (diff_exp > 0) {
+	    // lo summand in c
+	    // hi summand in r.u (sign), r_exp, r_mant (with implicit 1)  and 
+	    // remains (lower MANT_WIDTH(WIDTH) bits)
+		EXP_TYPE(WIDTH) lo_exp = hi_exp;
+		    // exchange hi_exp and lo_exp
+		UINT_FAST(WIDTH) lo_mant = EXTRACT_MANT(WIDTH, c.u);
+		//hi_mant = r_mant;
+		//hi_exp = r_exp;
+		//r.u = a.u;
 
+		if (diff_exp <= MANT_WIDTH(WIDTH)+2) { // lo not too low
+		    if (lo_exp == 0)
+    			diff_exp--; // lo subnormal
+		    else
+    			lo_mant |= BIGONE<<MANT_WIDTH(WIDTH); // insert implicit 1
 
+		    if (((r.u ^ c.u) & SIGN_MASK(WIDTH)) == 0) {
+			// same sign
+			// simplifies the normalisation, but overflow checks are needed
+// what if r_exp==1 && lo_exp==0 => diff_exp==0
+			INT_FAST(WIDTH) sum = (lo_mant >> (diff_exp-1)) + r_mant;
+// evtl. sum um 1 bit nach links geshiftet, deshalb exponent erhöhen
+			if (sum < (BIGONE<<MANT_WIDTH(WIDTH))) {		// no bit overflow
+			    lo_mant <<= 1;
+			    sum = (lo_mant >> diff_exp) + 2*r_mant
+				+ (remains >> (MANT_WIDTH(WIDTH)-1));
+			} else if (r_exp<EXP_MAX(WIDTH)-1) {		// 1 bit overflow
+			    sum += (BIGONE<<MANT_WIDTH(WIDTH));
+			} else {					
+			    r.u |= EXP_MASK(WIDTH); // infinity
+			    return r.f;
+			}
+			UINT_FAST(WIDTH) rem = lo_mant & ((BIGONE<<(diff_exp))-1);
+			r.u |= ((UINT_FAST(WIDTH))hi_exp<<MANT_WIDTH(WIDTH)) + ROUND(sum, rem);
+			    // Now the leading 1 must be masked out. But it is more efficient
+			    // to decrement the exponent by 1 and then add the implicit 1.
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    } else {
-	UINT_FAST(WIDTH) lo_mant, hi_mant;
-	
-	if (diff_exp > 0) {
-	    hi_exp += diff_exp;
-	    lo_exp -= diff_exp;
-		// exchange hi_exp and lo_exp
-	    lo_mant = EXTRACT_MANT(WIDTH, b.u);
-	    hi_mant = EXTRACT_MANT(WIDTH, a.u);
-	    r.u = a.u;
-	} else {
-	    diff_exp = -diff_exp;
-	    lo_mant = EXTRACT_MANT(WIDTH, a.u);
-	    hi_mant = EXTRACT_MANT(WIDTH, b.u);
-	    r.u = b.u;
-	}
-	// temporarily the lower bits of r.u are not masked out,
-	// in order to return the correct value in the case of an exception
-
-	if (hi_exp == EXP_MAX(WIDTH)) {
-	    if (hi_mant!=0) {
-		r.u = NOTANUM(WIDTH); // x+nan = nan
-	    } // x+inf = inf
-
-	} else if (diff_exp <= MANT_WIDTH(WIDTH)+2) { // lo not too low
-	    // from now on, only the sign of r.u is needed
-	    r.u &= SIGN_MASK(WIDTH);
-
-	    if (lo_exp == 0)
-    		diff_exp--; // lo subnormal
-	    else
-    		lo_mant |= BIGONE<<MANT_WIDTH(WIDTH); // insert implicit 1
-
-	    if (((a.u ^ b.u) & SIGN_MASK(WIDTH)) == 0) {
-		// same sign
-		// simplifies the normalisation, but overflow checks are needed
-		INT_FAST(WIDTH) sum = (lo_mant >> diff_exp) + hi_mant;
-		if (sum < (BIGONE<<MANT_WIDTH(WIDTH))) {		// no bit overflow
-		    lo_mant <<= 1;
-		    sum = (lo_mant >> diff_exp) + 2*hi_mant;
-		} else if (hi_exp<EXP_MAX(WIDTH)-1) {		// 1 bit overflow
-		    sum += (BIGONE<<MANT_WIDTH(WIDTH));
-		} else {					
-		    r.u |= EXP_MASK(WIDTH); // infinity
-		    return r.f;
-		}
-		UINT_FAST(WIDTH) rem = lo_mant & ((BIGONE<<(diff_exp))-1);
-		r.u |= ((UINT_FAST(WIDTH))hi_exp<<MANT_WIDTH(WIDTH)) + ROUND(sum, rem);
-		    // Now the leading 1 must be masked out. But it is more efficient
-		    // to decrement the exponent by 1 and then add the implicit 1.
-
-	    } else {
-		// not the same sign
-		UINT_FAST(WIDTH) rem;
-		INT_FAST(WIDTH) sum = (hi_mant | (BIGONE<<MANT_WIDTH(WIDTH)))
-		    - (lo_mant>>diff_exp)
-		    - (((lo_mant & ((BIGONE<<(diff_exp))-1))!=0) ? 1 : 0);
-
-		if (diff_exp > 1) {
-		    if (sum < (BIGONE<<MANT_WIDTH(WIDTH))) {
-			sum = (sum << 2) | (((-lo_mant) >> (diff_exp-2)) & 3);
-			rem = lo_mant & ((BIGONE<<(diff_exp-2))-1);
-			hi_exp = hi_exp - 1;
 		    } else {
-		        sum = (sum << 1) | (((-lo_mant) >> (diff_exp-1)) & 1);
-			rem = lo_mant & ((BIGONE<<(diff_exp-1))-1);
-		    }
-		} else {
-		    uint_fast8_t zeros = (sum==0)
-			? MANT_WIDTH(WIDTH)+2
-			: CLZ(WIDTH)(sum) + MANT_WIDTH(WIDTH) - WIDTH + 2;
-		    // in LLVM clz(0)=clz(1)+1, but in gcc it is undefined,
-		    // hence we must deal with this special case
+			// not the same sign
+    			UINT_FAST(WIDTH) rem;
+			INT_FAST(WIDTH) sum = r_mant
+			    - (lo_mant>>(diff_exp-1))
+			    - (((lo_mant & ((BIGONE<<(diff_exp-1))-1))!=0) ? 1 : 0);
+			// r_exp-- ?
 
-		    sum = (sum << zeros)
-			| (((-lo_mant) << (zeros-diff_exp)) & ((BIGONE<<zeros)-1));
-		    rem = 0;
-		    hi_exp = hi_exp - zeros + 1;
-		}
-		r.u |= (hi_exp < 1)
-		    ? (ROUND(sum, rem) >> (1-hi_exp))
-		    : (((UINT_FAST(WIDTH))(hi_exp-1)<<MANT_WIDTH(WIDTH)) + ROUND(sum, rem));
+			if (diff_exp > 1) {
+			    if (sum < (BIGONE<<MANT_WIDTH(WIDTH))) {
+				sum = (sum << 2) | (((-lo_mant) >> (diff_exp-2)) & 3);
+				rem = lo_mant & ((BIGONE<<(diff_exp-2))-1);
+				r_exp = r_exp - 1;
+			    } else {
+		    		sum = (sum << 1) | (((-lo_mant) >> (diff_exp-1)) & 1);
+				rem = lo_mant & ((BIGONE<<(diff_exp-1))-1);
+			    }
+			} else {
+			    uint_fast8_t zeros = (sum==0)
+				? MANT_WIDTH(WIDTH)+2
+				: CLZ(WIDTH)(sum) + MANT_WIDTH(WIDTH) - WIDTH + 2;
+			    // in LLVM clz(0)=clz(1)+1, but in gcc it is undefined,
+			    // hence we must deal with this special case
+
+// what about the bits in remain, if zeros is high ?
+			    sum = (sum << zeros)
+				| (((-lo_mant) << (zeros-diff_exp)) & ((BIGONE<<zeros)-1));
+			    rem = 0;
+			    r_exp = r_exp - zeros + 1;
+			}
+			r.u |= (r_exp < 1)
+			    ? (ROUND(sum, rem) >> (1-r_exp))
+			    : (((UINT_FAST(WIDTH))(r_exp-1)<<MANT_WIDTH(WIDTH)) + ROUND(sum, rem));
 			// Now the leading 1 must be masked out. But it is more efficient to
 			// decrement the exponent by 1 and then add the implicit 1.
+    		    }
+		} // else lo much to low, return hi
+
+	    } else { // diff_exp < 0
+		diff_exp = -diff_exp;
+		//lo_mant = r_mant
+		//lo_exp = r_exp
+		UINT_FAST(WIDTH) hi_mant = EXTRACT_MANT(WIDTH, c.u);
+		//r.u = c.u;
+
+		if (diff_exp <= MANT_WIDTH(WIDTH)+2) { // lo not too low
+		    // from now on, only the sign of r.u is needed
+		    //r.u &= SIGN_MASK(WIDTH);
+
+		    if (((r.u ^ c.u) & SIGN_MASK(WIDTH)) == 0) {
+			// same sign
+			// simplifies the normalisation, but overflow checks are needed
+			INT_FAST(WIDTH) sum = (r_mant >> diff_exp) + 2*hi_mant;
+			if (sum < (BIGONE<<MANT_WIDTH(WIDTH))) {		// no bit overflow
+			    r_mant <<= 1;
+			    sum = (r_mant >> diff_exp) + 4*hi_mant;
+			} else if (hi_exp<EXP_MAX(WIDTH)-1) {		// 1 bit overflow
+			    sum += (BIGONE<<MANT_WIDTH(WIDTH));
+			} else {					
+			    r.u |= EXP_MASK(WIDTH); // infinity
+			    return r.f;
+			}
+			UINT_FAST(WIDTH) rem = r_mant & ((BIGONE<<(diff_exp))-1);
+			r.u |= ((UINT_FAST(WIDTH))hi_exp<<MANT_WIDTH(WIDTH)) + ROUND(sum, rem);
+			    // Now the leading 1 must be masked out. But it is more efficient
+			    // to decrement the exponent by 1 and then add the implicit 1.
+
+		    } else {
+			// not the same sign
+			UINT_FAST(WIDTH) rem;
+			INT_FAST(WIDTH) sum = (hi_mant | (BIGONE<<MANT_WIDTH(WIDTH)))
+			    - (r_mant>>diff_exp)
+			    - (((r_mant & ((BIGONE<<(diff_exp))-1))!=0) ? 1 : 0);
+
+			if (diff_exp > 1) {
+			    if (sum < (BIGONE<<MANT_WIDTH(WIDTH))) {
+				sum = (sum << 2) | (((-r_mant) >> (diff_exp-2)) & 3);
+				rem = r_mant & ((BIGONE<<(diff_exp-2))-1);
+				hi_exp = hi_exp - 1;
+			    } else {
+		    		sum = (sum << 1) | (((-r_mant) >> (diff_exp-1)) & 1);
+				rem = r_mant & ((BIGONE<<(diff_exp-1))-1);
+			    }
+			} else {
+			    uint_fast8_t zeros = (sum==0)
+				? MANT_WIDTH(WIDTH)+2
+				: CLZ(WIDTH)(sum) + MANT_WIDTH(WIDTH) - WIDTH + 2;
+			    // in LLVM clz(0)=clz(1)+1, but in gcc it is undefined,
+			    // hence we must deal with this special case
+
+			    sum = (sum << zeros)
+				| (((-r_mant) << (zeros-diff_exp)) & ((BIGONE<<zeros)-1));
+			    rem = 0;
+			    hi_exp = hi_exp - zeros + 1;
+			}
+			r.u |= (hi_exp < 1)
+			    ? (ROUND(sum, rem) >> (1-hi_exp))
+			    : (((UINT_FAST(WIDTH))(hi_exp-1)<<MANT_WIDTH(WIDTH)) + ROUND(sum, rem));
+			// Now the leading 1 must be masked out. But it is more efficient to
+			// decrement the exponent by 1 and then add the implicit 1.
+		    }
+		} // else lo much to low, return hi
 	    }
-	} // else lo much to low, return hi
+	}
     }
     return r.f;
+
 
 //if (a.u==0x3000 && b.u==0xafff)
 //    printf("sum=%lx rem=%lx hi_mant=%lx lo_mant=%lx hi_exp=%d lo_exp=%d\n",
@@ -613,7 +647,6 @@ FLOAT(WIDTH) FUNC_FMA(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf, FLOAT(WIDTH) cf)
 
 
 
-#endif
 
 
 
