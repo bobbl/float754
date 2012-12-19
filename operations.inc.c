@@ -431,8 +431,16 @@ FLOAT(WIDTH) FUNC_FMA(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf, FLOAT(WIDTH) cf)
 	    // real+real
 	    // 1st summand in r.u (sign), r_exp, r_mant (with implicit 1)  and remains
 	    // 2nd summand in c
-	    EXP_TYPE(WIDTH) hi_exp = EXTRACT_EXP(WIDTH, c.u);
-	    EXP_TYPE(WIDTH) diff_exp = r_exp - hi_exp;
+	    EXP_TYPE(WIDTH) c_exp = EXTRACT_EXP(WIDTH, c.u);
+	    UINT_FAST(WIDTH) c_mant = EXTRACT_MANT(WIDTH, c.u);
+	    if (c_exp==0) { // normalise subnormals
+		uint_fast8_t zeros = CLZ(WIDTH)(c_mant) - (WIDTH-1-MANT_WIDTH(WIDTH));
+    		c_exp -= zeros;
+		c_mant <<= zeros;
+	    } else {
+		c_mant |= MANT_MASK(WIDTH)+1;
+	    }
+	    EXP_TYPE(WIDTH) diff_exp = r_exp - c_exp;
 
 	    if (diff_exp == 0) {
 		// same exponent
@@ -445,14 +453,14 @@ FLOAT(WIDTH) FUNC_FMA(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf, FLOAT(WIDTH) cf)
 		    } else if (r_exp == 0) {
 			// product must be shifted right by 1 for implicit one
 			remains |= r_mant & 1;
-			r_mant = (r_mant>>1) + 2*(c.u & MANT_MASK(WIDTH));
+			r_mant = (r_mant>>1) + 2*(c_mant);
 			r.u |= ROUND(r_mant, remains);
 			// both numbers are subnormal. If there is an overflow, i.e. the
 			// sum is normal, bit 52 of the result is set, which means that
 			// the exponent is 1 and not 0. Hence the conversion from subnormal
 			// to normal works automatically, only the sign has to be added.
 		    } else {
-			r_mant += 2*((c.u&MANT_MASK(WIDTH))|(MANT_MASK(WIDTH)+1));
+			r_mant += 2*c_mant;
 			r_mant = ROUND(r_mant, remains);
 			if (r_mant>=(4*MANT_MASK(WIDTH)+4)) { // only == is possible
 			    r_mant <<= 1;
@@ -465,7 +473,7 @@ FLOAT(WIDTH) FUNC_FMA(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf, FLOAT(WIDTH) cf)
 		} else {
 
 		    // numbers have different signs -> subtraction
-		    INT_FAST(WIDTH) sum = r_mant - 2*((c.u&MANT_MASK(WIDTH))|(MANT_MASK(WIDTH)+1));
+		    INT_FAST(WIDTH) sum = r_mant - 2*(c_mant|(MANT_MASK(WIDTH)+1));
 		    if (sum == 0) {
 			r.u = r.u;
 		    } else {
@@ -497,28 +505,17 @@ FLOAT(WIDTH) FUNC_FMA(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf, FLOAT(WIDTH) cf)
 	    // lo summand in c
 	    // hi summand in r.u (sign), r_exp, r_mant (with implicit 1)  and 
 	    // remains (lower MANT_WIDTH(WIDTH) bits)
-		EXP_TYPE(WIDTH) lo_exp = hi_exp;
-		    // exchange hi_exp and lo_exp
-		UINT_FAST(WIDTH) lo_mant = EXTRACT_MANT(WIDTH, c.u);
-		//hi_mant = r_mant;
-		//hi_exp = r_exp;
-		//r.u = a.u;
 
-		if (diff_exp <= MANT_WIDTH(WIDTH)+2) { // lo not too low
-		    if (lo_exp == 0)
-    			diff_exp--; // lo subnormal
-		    else
-    			lo_mant |= BIGONE<<MANT_WIDTH(WIDTH); // insert implicit 1
-
+		if (diff_exp <= MANT_WIDTH(WIDTH)+2) { // lo not much too low
 		    if (((r.u ^ c.u) & SIGN_MASK(WIDTH)) == 0) {
 			// same sign
 			// simplifies the normalisation, but overflow checks are needed
 // what if r_exp==1 && lo_exp==0 => diff_exp==0
-			INT_FAST(WIDTH) sum = (lo_mant >> (diff_exp-1)) + r_mant;
+			INT_FAST(WIDTH) sum = (c_mant >> (diff_exp-1)) + r_mant;
 // evtl. sum um 1 bit nach links geshiftet, deshalb exponent erhöhen
 			if (sum < (BIGONE<<MANT_WIDTH(WIDTH))) {		// no bit overflow
-			    lo_mant <<= 1;
-			    sum = (lo_mant >> diff_exp) + 2*r_mant
+			    c_mant <<= 1;
+			    sum = (c_mant >> diff_exp) + 2*r_mant
 				+ (remains >> (MANT_WIDTH(WIDTH)-1));
 			} else if (r_exp<EXP_MAX(WIDTH)-1) {		// 1 bit overflow
 			    sum += (BIGONE<<MANT_WIDTH(WIDTH));
@@ -526,8 +523,8 @@ FLOAT(WIDTH) FUNC_FMA(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf, FLOAT(WIDTH) cf)
 			    r.u |= EXP_MASK(WIDTH); // infinity
 			    return r.f;
 			}
-			UINT_FAST(WIDTH) rem = lo_mant & ((BIGONE<<(diff_exp))-1);
-			r.u |= ((UINT_FAST(WIDTH))hi_exp<<MANT_WIDTH(WIDTH)) + ROUND(sum, rem);
+			UINT_FAST(WIDTH) rem = c_mant & ((BIGONE<<(diff_exp))-1);
+			r.u |= ((UINT_FAST(WIDTH))c_exp<<MANT_WIDTH(WIDTH)) + ROUND(sum, rem);
 			    // Now the leading 1 must be masked out. But it is more efficient
 			    // to decrement the exponent by 1 and then add the implicit 1.
 
@@ -535,18 +532,18 @@ FLOAT(WIDTH) FUNC_FMA(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf, FLOAT(WIDTH) cf)
 			// not the same sign
     			UINT_FAST(WIDTH) rem;
 			INT_FAST(WIDTH) sum = r_mant
-			    - (lo_mant>>(diff_exp-1))
-			    - (((lo_mant & ((BIGONE<<(diff_exp-1))-1))!=0) ? 1 : 0);
+			    - (c_mant>>(diff_exp-1))
+			    - (((c_mant & ((BIGONE<<(diff_exp-1))-1))!=0) ? 1 : 0);
 			// r_exp-- ?
 
 			if (diff_exp > 1) {
 			    if (sum < (BIGONE<<MANT_WIDTH(WIDTH))) {
-				sum = (sum << 2) | (((-lo_mant) >> (diff_exp-2)) & 3);
-				rem = lo_mant & ((BIGONE<<(diff_exp-2))-1);
+				sum = (sum << 2) | (((-c_mant) >> (diff_exp-2)) & 3);
+				rem = c_mant & ((BIGONE<<(diff_exp-2))-1);
 				r_exp = r_exp - 1;
 			    } else {
-		    		sum = (sum << 1) | (((-lo_mant) >> (diff_exp-1)) & 1);
-				rem = lo_mant & ((BIGONE<<(diff_exp-1))-1);
+		    		sum = (sum << 1) | (((-c_mant) >> (diff_exp-1)) & 1);
+				rem = c_mant & ((BIGONE<<(diff_exp-1))-1);
 			    }
 			} else {
 			    uint_fast8_t zeros = (sum==0)
@@ -557,7 +554,7 @@ FLOAT(WIDTH) FUNC_FMA(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf, FLOAT(WIDTH) cf)
 
 // what about the bits in remain, if zeros is high ?
 			    sum = (sum << zeros)
-				| (((-lo_mant) << (zeros-diff_exp)) & ((BIGONE<<zeros)-1));
+				| (((-c_mant) << (zeros-diff_exp)) & ((BIGONE<<zeros)-1));
 			    rem = 0;
 			    r_exp = r_exp - zeros + 1;
 			}
@@ -573,35 +570,42 @@ FLOAT(WIDTH) FUNC_FMA(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf, FLOAT(WIDTH) cf)
 		diff_exp = -diff_exp;
 		//lo_mant = r_mant
 		//lo_exp = r_exp
-		UINT_FAST(WIDTH) hi_mant = EXTRACT_MANT(WIDTH, c.u);
 		//r.u = c.u;
 
-		if (diff_exp <= MANT_WIDTH(WIDTH)+2) { // lo not too low
+
+		if (diff_exp <= MANT_WIDTH(WIDTH)+2) { // product not too low
 		    // from now on, only the sign of r.u is needed
 		    //r.u &= SIGN_MASK(WIDTH);
 
 		    if (((r.u ^ c.u) & SIGN_MASK(WIDTH)) == 0) {
 			// same sign
 			// simplifies the normalisation, but overflow checks are needed
-			INT_FAST(WIDTH) sum = (r_mant >> diff_exp) + 2*hi_mant;
+			INT_FAST(WIDTH) sum = (r_mant >> diff_exp) + 2*c_mant;
+
+if (a.u==0x004c && b.u==0x1bc5 && c.u==0x0205)
+printf("r.u=%lx r_exp=%d r_mant=%lx remain=%lx diff_exp=%d sum=%lx\n",
+(unsigned long)r.u, r_exp, r_mant, remains, diff_exp, sum);
+// we need a normalisation, if c is subnormal
+
+
 			if (sum < (BIGONE<<MANT_WIDTH(WIDTH))) {		// no bit overflow
 			    r_mant <<= 1;
-			    sum = (r_mant >> diff_exp) + 4*hi_mant;
-			} else if (hi_exp<EXP_MAX(WIDTH)-1) {		// 1 bit overflow
+			    sum = (r_mant >> diff_exp) + 4*c_mant;
+			} else if (c_exp<EXP_MAX(WIDTH)-1) {		// 1 bit overflow
 			    sum += (BIGONE<<MANT_WIDTH(WIDTH));
 			} else {					
 			    r.u |= EXP_MASK(WIDTH); // infinity
 			    return r.f;
 			}
 			UINT_FAST(WIDTH) rem = r_mant & ((BIGONE<<(diff_exp))-1);
-			r.u |= ((UINT_FAST(WIDTH))hi_exp<<MANT_WIDTH(WIDTH)) + ROUND(sum, rem);
+			r.u |= ((UINT_FAST(WIDTH))c_exp<<MANT_WIDTH(WIDTH)) + ROUND(sum, rem);
 			    // Now the leading 1 must be masked out. But it is more efficient
 			    // to decrement the exponent by 1 and then add the implicit 1.
 
 		    } else {
 			// not the same sign
 			UINT_FAST(WIDTH) rem;
-			INT_FAST(WIDTH) sum = (hi_mant | (BIGONE<<MANT_WIDTH(WIDTH)))
+			INT_FAST(WIDTH) sum = (c_mant | (BIGONE<<MANT_WIDTH(WIDTH)))
 			    - (r_mant>>diff_exp)
 			    - (((r_mant & ((BIGONE<<(diff_exp))-1))!=0) ? 1 : 0);
 
@@ -609,7 +613,7 @@ FLOAT(WIDTH) FUNC_FMA(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf, FLOAT(WIDTH) cf)
 			    if (sum < (BIGONE<<MANT_WIDTH(WIDTH))) {
 				sum = (sum << 2) | (((-r_mant) >> (diff_exp-2)) & 3);
 				rem = r_mant & ((BIGONE<<(diff_exp-2))-1);
-				hi_exp = hi_exp - 1;
+				c_exp = c_exp - 1;
 			    } else {
 		    		sum = (sum << 1) | (((-r_mant) >> (diff_exp-1)) & 1);
 				rem = r_mant & ((BIGONE<<(diff_exp-1))-1);
@@ -624,15 +628,18 @@ FLOAT(WIDTH) FUNC_FMA(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf, FLOAT(WIDTH) cf)
 			    sum = (sum << zeros)
 				| (((-r_mant) << (zeros-diff_exp)) & ((BIGONE<<zeros)-1));
 			    rem = 0;
-			    hi_exp = hi_exp - zeros + 1;
+			    c_exp = c_exp - zeros + 1;
 			}
-			r.u |= (hi_exp < 1)
-			    ? (ROUND(sum, rem) >> (1-hi_exp))
-			    : (((UINT_FAST(WIDTH))(hi_exp-1)<<MANT_WIDTH(WIDTH)) + ROUND(sum, rem));
+			r.u |= (c_exp < 1)
+			    ? (ROUND(sum, rem) >> (1-c_exp))
+			    : (((UINT_FAST(WIDTH))(c_exp-1)<<MANT_WIDTH(WIDTH)) + ROUND(sum, rem));
 			// Now the leading 1 must be masked out. But it is more efficient to
 			// decrement the exponent by 1 and then add the implicit 1.
 		    }
-		} // else lo much to low, return hi
+		} else { // product much to low, return c
+		    r.u = c.u;
+		}
+		    
 	    }
 	}
     }
@@ -640,8 +647,8 @@ FLOAT(WIDTH) FUNC_FMA(WIDTH) (FLOAT(WIDTH) af, FLOAT(WIDTH) bf, FLOAT(WIDTH) cf)
 
 
 //if (a.u==0x3000 && b.u==0xafff)
-//    printf("sum=%lx rem=%lx hi_mant=%lx lo_mant=%lx hi_exp=%d lo_exp=%d\n",
-//	sum, rem, hi_mant, lo_mant, hi_exp, lo_exp);
+//    printf("sum=%lx rem=%lx c_mant=%lx lo_mant=%lx c_exp=%d lo_exp=%d\n",
+//	sum, rem, c_mant, lo_mant, c_exp, lo_exp);
 }
 
 
